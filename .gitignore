@@ -1,0 +1,103 @@
+# Claude Code internal directory
+.claude/
+
+# ======================
+# DATA FILES (large/generated)
+# ======================
+source/data/data_raw.csv
+source/model_ai/data/features/
+source/model_ai/data/processed/
+
+# ======================
+# PYTHON
+# ======================
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ======================
+# MODEL ARTIFACTS
+# ======================
+source/model_ai/models/*.pkl
+source/model_ai/models/*.h5
+source/model_ai/models/*.pt
+source/model_ai/models/*.pth
+source/model_ai/models/*.onnx
+source/model_ai/results/
+
+# ======================
+# ENVIRONMENT & SECRETS
+# ======================
+.env
+.env.*
+!.env.example
+*.key
+secrets.*
+
+# ======================
+# IDE / EDITOR
+# ======================
+.vscode/
+.idea/
+*.iml
+*.suo
+*.user
+*.swp
+*.swo
+*~
+
+# ======================
+# OS
+# ======================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ======================
+# ANDROID / MOBILE
+# ======================
+source/mobile/.gradle/
+source/mobile/build/
+source/mobile/local.properties
+source/mobile/**/build/
+source/mobile/**/*.apk
+source/mobile/**/*.aab
+source/mobile/**/*.ap_
+source/mobile/**/captures/
+source/mobile/.externalNativeBuild/
+source/mobile/.cxx/
+source/mobile/keystore/
+*.jks
+*.keystore
+
+# ======================
+# LOGS & TEMP
+# ======================
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.bak
+*.cache
+
+/CLAUDE.MD

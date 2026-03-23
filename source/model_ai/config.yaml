@@ -1,0 +1,90 @@
+# ============================================================
+# CONFIG.YAML — Nguồn sự thật duy nhất cho toàn bộ dự án
+# KHÔNG hardcode bất kỳ số nào vào code, luôn đọc từ file này
+# ============================================================
+
+# --- Phạm vi địa lý (Biển Đông Việt Nam) ---
+geography:
+  lat_min: 8.0
+  lat_max: 22.0
+  lon_min: 102.0
+  lon_max: 120.0
+  year_start: 1980
+  year_end: 2024
+
+# --- Đường dẫn dữ liệu ---
+data:
+  raw_file:     'data/raw/ibtracs_WP.csv'        # IBTrACS WP — dữ liệu gốc, KHÔNG sửa
+  clean_file:   'data/processed/bao_bien_dong_clean.csv'
+  feature_file: 'data/features/feature_matrix.csv'
+  sst_dir:      'data/raw/sst/'                  # NOAA OI SST .nc theo từng năm
+  time_step_hours: 6
+
+# --- Cài đặt làm sạch dữ liệu (G1 → G2) ---
+cleaning:
+  track_type: 'main'         # Chỉ giữ track_type == 'main', bỏ 'spur'
+  min_wind_kt: 25            # Loại bỏ record có tốc độ gió < 25 kt
+  skiprows: [1]              # Hàng 2 trong IBTrACS CSV là units row
+
+# --- Feature engineering (G2 → G3) ---
+features:
+  names:
+    - lat_norm
+    - lon_norm
+    - dlat
+    - dlon
+    - speed_kmh
+    - direction
+    - vmax
+    - pmin
+    - sst_c
+    - month_sin
+    - month_cos
+    - storm_age_h
+  n_features: 12             # Số features đầu vào (month_sin + month_cos tính riêng)
+  wind_primary:   'WMO_WIND' # Ưu tiên 1: gió 10 phút (JMA/WMO chuẩn)
+  wind_fallback:  'USA_WIND' # Fallback: gió 1 phút (JTWC)
+  pres_primary:   'WMO_PRES'
+  pres_fallback:  'USA_PRES'
+  sst_climatology: true      # Dùng SST climatology khi không có file .nc
+
+# --- Model (G3 → G5) ---
+model:
+  lookback: 8        # 8 bước × 6h = 48h nhìn về quá khứ
+  horizon: 8         # 8 bước × 6h = 48h dự đoán tới (anchor tại bước 4 và 8)
+  anchor_steps: [4, 8]  # Bước 4=24h, bước 8=48h — model trực tiếp dự đoán 2 điểm này
+  hidden_size: 128
+  num_layers: 2
+  dropout: 0.3
+  batch_size: 32
+  lr: 0.001
+  max_epochs: 150
+  patience: 20       # Early stopping
+
+# --- Loss function ---
+loss:
+  weight_24h: 0.6    # Ưu tiên 24h (quan trọng hơn cho cảnh báo thiên tai)
+  weight_48h: 0.4
+
+# --- Train/Val/Test split (theo NĂM — không random) ---
+split:
+  train: [1980, 2016]
+  val:   [2017, 2020]
+  test:  [2021, 2024]
+
+# --- Đường dẫn model output ---
+output:
+  checkpoint_dir: 'models/checkpoints/'
+  best_model_pt:  'models/final/model_best.pt'
+  onnx_model:     'models/final/model_best.onnx'
+  scaler_path:    'models/scaler.pkl'
+  results_log:    'results/results_log.json'
+  figures_dir:    'results/figures/'
+
+# --- Checkpoint conditions ---
+checkpoints:
+  g1_min_storms: 300
+  g3_min_sequences: 5000
+  g5_lstm_max_mae_km: 200
+  g6_min_improvement_pct: 10
+  g7_min_skill_score_pct: 20
