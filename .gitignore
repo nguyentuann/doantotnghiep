@@ -73,21 +73,12 @@ Thumbs.db
 desktop.ini
 
 # ======================
-# ANDROID / MOBILE
+# FRONTEND (React + Vite)
 # ======================
-source/mobile/.gradle/
-source/mobile/build/
-source/mobile/local.properties
-source/mobile/**/build/
-source/mobile/**/*.apk
-source/mobile/**/*.aab
-source/mobile/**/*.ap_
-source/mobile/**/captures/
-source/mobile/.externalNativeBuild/
-source/mobile/.cxx/
-source/mobile/keystore/
-*.jks
-*.keystore
+source/frontend/node_modules/
+source/frontend/dist/
+source/frontend/.vite/
+source/frontend/coverage/
 
 # ======================
 # LOGS & TEMP
@@ -101,3 +92,4 @@ temp/
 *.cache
 
 /CLAUDE.MD
+/TODO.md
