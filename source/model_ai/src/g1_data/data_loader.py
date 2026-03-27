@@ -11,7 +11,6 @@ Lưu ý quan trọng:
   - Tất cả hyperparameter đọc từ config.yaml, không hardcode
 """
 
-import os
 import yaml
 import pandas as pd
 import numpy as np
@@ -19,9 +18,10 @@ from pathlib import Path
 
 
 def load_config(config_path: str = None) -> dict:
-    """Đọc config.yaml, mặc định tìm ở thư mục cha của src/."""
+    """Đọc config.yaml, mặc định tìm ở thư mục gốc model_ai/."""
     if config_path is None:
-        config_path = Path(__file__).parent.parent / "config.yaml"
+        # src/g1_data/data_loader.py → .parent = g1_data/ → .parent = src/ → .parent = model_ai/
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -52,8 +52,7 @@ def load_and_filter_scs(raw_csv: str = None, config: dict = None) -> pd.DataFram
 
     # --- Đường dẫn file ---
     if raw_csv is None:
-        # Ưu tiên dùng data_raw.csv có sẵn trong source/data/
-        default_raw = Path(__file__).parent.parent.parent / "data" / "data_raw.csv"
+        default_raw = Path(__file__).parent.parent.parent.parent / "data" / "data_raw.csv"
         raw_csv = str(default_raw)
 
     print(f"[G1] Đọc file: {raw_csv}")
@@ -142,25 +141,12 @@ def load_and_filter_scs(raw_csv: str = None, config: dict = None) -> pd.DataFram
 
 
 def save_clean_data(df: pd.DataFrame, config: dict = None, output_path: str = None) -> str:
-    """
-    Lưu DataFrame đã lọc vào file CSV.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-    config : dict
-    output_path : str, optional
-        Ghi đè đường dẫn mặc định từ config.
-
-    Returns
-    -------
-    str : Đường dẫn file đã lưu.
-    """
+    """Lưu DataFrame đã lọc vào file CSV."""
     if config is None:
         config = load_config()
 
     if output_path is None:
-        base_dir = Path(__file__).parent.parent
+        base_dir = Path(__file__).parent.parent.parent  # model_ai/
         output_path = base_dir / config["data"]["clean_file"]
 
     output_path = Path(output_path)
@@ -176,7 +162,7 @@ def load_clean_data(config: dict = None) -> pd.DataFrame:
     """Đọc bao_bien_dong_clean.csv đã lưu trước đó."""
     if config is None:
         config = load_config()
-    base_dir = Path(__file__).parent.parent
+    base_dir = Path(__file__).parent.parent.parent  # model_ai/
     path = base_dir / config["data"]["clean_file"]
     df = pd.read_csv(path, low_memory=False, parse_dates=["ISO_TIME"])
     print(f"[load] Đọc {path.name}: {len(df):,} rows, {df['SID'].nunique()} storms")

@@ -35,7 +35,8 @@ from sklearn.preprocessing import StandardScaler
 
 def load_config(config_path: str = None) -> dict:
     if config_path is None:
-        config_path = Path(__file__).parent.parent / "config.yaml"
+        # src/g2_g3_features/features.py → .parent = g2_g3_features/ → .parent = src/ → .parent = model_ai/
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -219,7 +220,7 @@ def make_sequences(feat_df: pd.DataFrame, config: dict):
     meta : pd.DataFrame  — SID, SEASON, init_time tương ứng với mỗi sequence
     """
     feat_names  = config["features"]["names"]
-    lookback    = config["model"]["lookback"]   # 8
+    lookback    = config["model"]["lookback"]      # 8
     anchor      = config["model"]["anchor_steps"]  # [4, 8]
     step_24h    = anchor[0]  # 4
     step_48h    = anchor[1]  # 8
@@ -280,7 +281,7 @@ def split_and_scale(X, y, meta, config):
                    meta_train, meta_val, meta_test, scaler
     """
     split_cfg = config["split"]
-    base_dir  = Path(__file__).parent.parent
+    base_dir  = Path(__file__).parent.parent.parent  # model_ai/
     scaler_path = base_dir / config["output"]["scaler_path"]
     scaler_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -334,10 +335,10 @@ def split_and_scale(X, y, meta, config):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    from data_loader import load_clean_data
+    from src.g1_data.data_loader import load_clean_data
 
     cfg = load_config()
-    base_dir = Path(__file__).parent.parent
+    base_dir = Path(__file__).parent.parent.parent  # model_ai/
 
     # G2: Tính features
     df_clean = load_clean_data(cfg)
