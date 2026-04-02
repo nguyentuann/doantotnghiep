@@ -72,11 +72,8 @@ html, body, #root {
 .map-container {
   flex: 1;
   position: relative;
-}
-
-.leaflet-container {
-  height: 100%;
-  width: 100%;
+  background: #000;
+  overflow: hidden;
 }
 
 .storm-info {
@@ -129,4 +126,52 @@ html, body, #root {
   width: 24px;
   height: 4px;
   border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legend-dash {
+  width: 24px;
+  height: 0;
+  border-top: 2px dashed #f59e0b;
+  flex-shrink: 0;
+}
+
+.legend-divider {
+  border-top: 1px solid #0f3460;
+  margin: 8px 0;
+}
+
+/* Header layout */
+.header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Language toggle button */
+.lang-toggle {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  background: transparent;
+  color: #e94560;
+  border: 1px solid #e94560;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.lang-toggle:hover {
+  background: #e94560;
+  color: #fff;
+}
+
+/* Mock warning */
+.mock-warning {
+  color: #f59e0b;
+  font-size: 0.7rem;
+  margin-top: 6px;
 }

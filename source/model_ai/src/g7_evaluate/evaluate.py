@@ -25,7 +25,8 @@ import torch
 from pathlib import Path
 
 from src.g4_models import build_model, load_config
-from src.g5_g6_train.utils import log_result
+from src.g5_g6_train.utils import log_result, load_scaler
+from src.g5_g6_train.trainer import cliper_from_X
 
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -74,34 +75,8 @@ def skill_score(cliper_mae: float, model_mae: float) -> float:
     return (cliper_mae - model_mae) / cliper_mae * 100.0
 
 
-# ─── CLIPER baseline ──────────────────────────────────────────────────────────
-
-def cliper_predict(X_test: np.ndarray, scaler) -> np.ndarray:
-    """
-    CLIPER: persistence extrapolation từ bước cuối của X_test.
-    X_test: (N, 8, 12) — đã StandardScaler.
-    Trả về (N, 4) = [lat_24h, lon_24h, lat_48h, lon_48h] in degrees.
-    """
-    N = X_test.shape[0]
-    # Inverse transform last time-step
-    last_step_scaled = X_test[:, -1, :]           # (N, 12)
-    last_step_orig   = scaler.inverse_transform(last_step_scaled)  # (N, 12)
-
-    # Denormalize position
-    lat_current = last_step_orig[:, 0] * 14.0 + 8.0    # lat_norm → lat
-    lon_current = last_step_orig[:, 1] * 18.0 + 102.0  # lon_norm → lon
-
-    # Last displacement (degrees / 6h)
-    dlat_last = last_step_orig[:, 2]  # dlat
-    dlon_last = last_step_orig[:, 3]  # dlon
-
-    # CLIPER predictions
-    lat_24h = lat_current + 4 * dlat_last
-    lon_24h = lon_current + 4 * dlon_last
-    lat_48h = lat_current + 8 * dlat_last
-    lon_48h = lon_current + 8 * dlon_last
-
-    return np.stack([lat_24h, lon_24h, lat_48h, lon_48h], axis=1)  # (N, 4)
+# cliper_predict = alias of shared cliper_from_X (same logic, reuse from trainer)
+cliper_predict = cliper_from_X
 
 
 # ─── Trajectory classification ────────────────────────────────────────────────
@@ -114,8 +89,9 @@ def classify_trajectories(X_test: np.ndarray, scaler) -> np.ndarray:
     N = X_test.shape[0]
     # Lấy 4 bước cuối, inverse transform
     last4_scaled = X_test[:, -4:, :]  # (N, 4, 12)
-    last4_flat   = last4_scaled.reshape(N * 4, 12)
-    last4_orig   = scaler.inverse_transform(last4_flat).reshape(N, 4, 12)
+    n_feat = last4_scaled.shape[2]
+    last4_flat   = last4_scaled.reshape(N * 4, n_feat)
+    last4_orig   = scaler.inverse_transform(last4_flat).reshape(N, 4, n_feat)
 
     dlat_avg = last4_orig[:, :, 2].mean(axis=1)  # avg dlat (index 2)
     dlon_avg = last4_orig[:, :, 3].mean(axis=1)  # avg dlon (index 3)
@@ -168,15 +144,21 @@ def load_model_checkpoint(model_name: str, cfg: dict):
         return None, None
 
 
-def model_predict(model, X_test: np.ndarray) -> np.ndarray:
+def model_predict(model, X_test: np.ndarray,
+                   cliper_pred: np.ndarray = None,
+                   residual: bool = False) -> np.ndarray:
     """
     Chạy inference, trả về (N, 4) degrees.
+    Nếu residual=True, model output là delta → cộng CLIPER để ra vị trí tuyệt đối.
     """
     model.eval()
     with torch.no_grad():
-        X_t  = torch.from_numpy(X_test).float()
-        pred = model(X_t).cpu().numpy()  # (N, 4)
-    return pred
+        X_t = torch.from_numpy(X_test).float()
+        out = model(X_t).cpu().numpy()  # (N, 4)
+
+    if residual and cliper_pred is not None:
+        return cliper_pred + out
+    return out
 
 
 # ─── Plots ────────────────────────────────────────────────────────────────────
@@ -492,6 +474,10 @@ def main():
 
     # --- Load models + predict ---
     print("\n[3] Load & đánh giá models...")
+    residual = cfg["model"].get("residual", False)
+    if residual:
+        print(f"  [residual mode] Model dự đoán delta từ CLIPER")
+
     model_names = ["lstm", "bilstm", "transformer"]
     all_preds   = {"cliper": cliper_pred}
     all_metrics = {"cliper": cliper_metrics}
@@ -503,7 +489,7 @@ def main():
             print(f"  [skip] {mname.upper()} — không tìm thấy checkpoint")
             continue
 
-        pred    = model_predict(model, X_test)
+        pred    = model_predict(model, X_test, cliper_pred=cliper_pred, residual=residual)
         metrics = compute_metrics(pred, y_test)
         ss_24   = skill_score(cliper_metrics["mae_24h"], metrics["mae_24h"])
         ss_48   = skill_score(cliper_metrics["mae_48h"], metrics["mae_48h"])

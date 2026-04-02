@@ -18,20 +18,7 @@ from pathlib import Path
 
 from src.g4_models import build_model, load_config
 from src.g5_g6_train.trainer import run_training
-from src.g5_g6_train.utils import save_checkpoint
-
-
-def _load_lstm_baseline_mae(base_dir: Path, cfg: dict) -> float | None:
-    """Đọc MAE 24h của LSTM từ results_log.json."""
-    log_path = base_dir / cfg["output"]["results_log"]
-    if not log_path.exists():
-        return None
-    with open(log_path, "r", encoding="utf-8") as f:
-        logs = json.load(f)
-    lstm_entries = [e for e in logs if e.get("model_name") == "lstm"]
-    if not lstm_entries:
-        return None
-    return lstm_entries[-1]["best_mae_24h"]
+from src.g5_g6_train.utils import save_checkpoint, load_scaler, load_lstm_baseline_mae
 
 
 def main():
@@ -39,7 +26,7 @@ def main():
     base_dir = Path(__file__).parent.parent.parent
 
     # --- Kiểm tra LSTM baseline ---
-    lstm_mae = _load_lstm_baseline_mae(base_dir, cfg)
+    lstm_mae = load_lstm_baseline_mae(base_dir, cfg)
     if lstm_mae is None:
         print("[G6] WARN: Chưa có kết quả LSTM trong results_log.json.")
         print("      Chạy train_lstm.py trước để có baseline.")
@@ -54,6 +41,8 @@ def main():
     X_val   = data["X_val"]
     y_val   = data["y_val"]
     print(f"  X_train={X_train.shape}  X_val={X_val.shape}")
+
+    scaler = load_scaler(cfg, base_dir)
 
     # --- Khởi tạo model ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -70,6 +59,7 @@ def main():
         X_val=X_val,
         y_val=y_val,
         device=device,
+        scaler=scaler,
     )
 
     # --- Checkpoint G6 ---

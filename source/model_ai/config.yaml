@@ -41,10 +41,13 @@ features:
     - month_sin
     - month_cos
     - storm_age_h
-  n_features: 12             # Số features đầu vào (month_sin + month_cos tính riêng)
+    - dist2land
+  n_features: 13             # 12 features gốc + dist2land (khoảng cách đến bờ, km)
   wind_primary:   'WMO_WIND' # Ưu tiên 1: gió 10 phút (JMA/WMO chuẩn)
-  wind_fallback:  'USA_WIND' # Fallback: gió 1 phút (JTWC)
+  wind_cma:       'CMA_WIND' # Ưu tiên 2: CMA — chính xác nhất cho SCS
+  wind_fallback:  'USA_WIND' # Fallback:  gió 1 phút (JTWC)
   pres_primary:   'WMO_PRES'
+  pres_cma:       'CMA_PRES' # Ưu tiên 2: CMA
   pres_fallback:  'USA_PRES'
   sst_climatology: true      # Dùng SST climatology khi không có file .nc
 
@@ -55,11 +58,12 @@ model:
   anchor_steps: [4, 8]  # Bước 4=24h, bước 8=48h — model trực tiếp dự đoán 2 điểm này
   hidden_size: 128
   num_layers: 2
-  dropout: 0.3
+  dropout: 0.4
   batch_size: 32
   lr: 0.001
   max_epochs: 150
   patience: 20       # Early stopping
+  residual: true     # Model học residual từ CLIPER → pred = CLIPER + model_output
 
 # --- Loss function ---
 loss:

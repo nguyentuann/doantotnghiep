@@ -15,7 +15,7 @@ from pathlib import Path
 
 from src.g4_models import build_model, load_config
 from src.g5_g6_train.trainer import run_training
-from src.g5_g6_train.utils import save_checkpoint
+from src.g5_g6_train.utils import save_checkpoint, load_scaler
 
 
 def main():
@@ -30,6 +30,8 @@ def main():
     X_val    = data["X_val"]     # (2557, 8, 12)
     y_val    = data["y_val"]     # (2557, 4)
     print(f"  X_train={X_train.shape}  X_val={X_val.shape}")
+
+    scaler = load_scaler(cfg, base_dir)
 
     # --- Khởi tạo model ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -46,6 +48,7 @@ def main():
         X_val=X_val,
         y_val=y_val,
         device=device,
+        scaler=scaler,
     )
 
     # --- Checkpoint G5 ---

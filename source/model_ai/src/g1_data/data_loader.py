@@ -69,10 +69,11 @@ def load_and_filter_scs(raw_csv: str = None, config: dict = None) -> pd.DataFram
     df["LON"] = pd.to_numeric(df["LON"], errors="coerce")
     df["SEASON"] = pd.to_numeric(df["SEASON"], errors="coerce")
     df["ISO_TIME"] = pd.to_datetime(df["ISO_TIME"], errors="coerce")
-    df[feat_cfg["wind_primary"]] = pd.to_numeric(df[feat_cfg["wind_primary"]], errors="coerce")
-    df[feat_cfg["wind_fallback"]] = pd.to_numeric(df[feat_cfg["wind_fallback"]], errors="coerce")
-    df[feat_cfg["pres_primary"]] = pd.to_numeric(df[feat_cfg["pres_primary"]], errors="coerce")
-    df[feat_cfg["pres_fallback"]] = pd.to_numeric(df[feat_cfg["pres_fallback"]], errors="coerce")
+    for col in [feat_cfg["wind_primary"], feat_cfg.get("wind_cma"), feat_cfg["wind_fallback"],
+                feat_cfg["pres_primary"], feat_cfg.get("pres_cma"), feat_cfg["pres_fallback"],
+                "DIST2LAND"]:
+        if col and col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # --- Lọc TRACK_TYPE == 'main' ---
     df = df[df["TRACK_TYPE"].str.strip() == clean_cfg["track_type"]].copy()
@@ -99,13 +100,15 @@ def load_and_filter_scs(raw_csv: str = None, config: dict = None) -> pd.DataFram
     df_full["in_scs"] = mask_scs.reindex(df_full.index, fill_value=False)
     print(f"     Rows full track (kể cả ngoài SCS): {len(df_full):,}")
 
-    # --- Tạo cột vmax và pmin (ưu tiên WMO, fallback USA) ---
-    df_full["vmax"] = df_full[feat_cfg["wind_primary"]].fillna(
-        df_full[feat_cfg["wind_fallback"]]
-    )
-    df_full["pmin"] = df_full[feat_cfg["pres_primary"]].fillna(
-        df_full[feat_cfg["pres_fallback"]]
-    )
+    # --- Tạo cột vmax và pmin (ưu tiên WMO → CMA → USA) ---
+    def _merge_col(primary, cma, fallback):
+        s = df_full[primary].copy()
+        if cma and cma in df_full.columns:
+            s = s.fillna(df_full[cma])
+        return s.fillna(df_full[fallback])
+
+    df_full["vmax"] = _merge_col(feat_cfg["wind_primary"], feat_cfg.get("wind_cma"), feat_cfg["wind_fallback"])
+    df_full["pmin"] = _merge_col(feat_cfg["pres_primary"], feat_cfg.get("pres_cma"), feat_cfg["pres_fallback"])
 
     # --- Sắp xếp theo storm và thời gian ---
     df_full = df_full.sort_values(["SID", "ISO_TIME"]).reset_index(drop=True)

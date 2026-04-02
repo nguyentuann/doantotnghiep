@@ -5,8 +5,10 @@
 # DATA FILES (large/generated)
 # ======================
 source/data/data_raw.csv
+source/model_ai/data/raw/
 source/model_ai/data/features/
 source/model_ai/data/processed/
+source/model_ai/data/era5/
 source/model_ai/data/DATA_DESCRIPTION.md
 
 # ======================
