@@ -52,11 +52,11 @@ def build_model(model_name: str, cfg: dict = None) -> nn.Module:
     elif name in ("transformer", "temporal_transformer"):
         return TemporalTransformerModel(
             n_features=n_features,
-            d_model=64,
+            d_model=hidden_size,     # 128, ngang LSTM
             nhead=4,
             num_encoder_layers=num_layers,
-            dim_feedforward=256,
-            dropout=0.2,
+            dim_feedforward=hidden_size * 4,  # 512
+            dropout=dropout,
             lookback=lookback,
         )
 

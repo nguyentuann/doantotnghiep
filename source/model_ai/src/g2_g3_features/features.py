@@ -158,6 +158,9 @@ def build_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             else:
                 storm_age_h = i * dt_h
 
+            # --- Khoảng cách đến bờ (km) — 0% NaN trong IBTrACS ---
+            dist2land = float(pd.to_numeric(row.get("DIST2LAND", np.nan), errors="coerce"))
+
             records.append({
                 "SID":       sid,
                 "SEASON":    row.get("SEASON", np.nan),
@@ -165,7 +168,7 @@ def build_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
                 "LAT":       lat,
                 "LON":       lon,
                 "in_scs":    row.get("in_scs", False),
-                # 12 features
+                # 13 features
                 "lat_norm":    lat_norm,
                 "lon_norm":    lon_norm,
                 "dlat":        dlat,
@@ -178,6 +181,7 @@ def build_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
                 "month_sin":   month_sin,
                 "month_cos":   month_cos,
                 "storm_age_h": storm_age_h,
+                "dist2land":   dist2land,
             })
 
     feat_df = pd.DataFrame(records)

@@ -71,6 +71,30 @@ def load_checkpoint(path: str, model: torch.nn.Module) -> torch.nn.Module:
     return model
 
 
+# ─── Scaler loading ───────────────────────────────────────────────────────────
+
+def load_scaler(cfg: dict, base_dir: Path):
+    """Load fitted StandardScaler từ scaler_path trong config."""
+    import pickle
+    scaler_path = base_dir / cfg["output"]["scaler_path"]
+    with open(scaler_path, "rb") as f:
+        return pickle.load(f)
+
+
+def load_lstm_baseline_mae(base_dir: Path, cfg: dict):
+    """Đọc MAE 24h của LSTM từ results_log.json. Trả về float hoặc None."""
+    import json
+    log_path = base_dir / cfg["output"]["results_log"]
+    if not log_path.exists():
+        return None
+    with open(log_path, "r", encoding="utf-8") as f:
+        logs = json.load(f)
+    lstm_entries = [e for e in logs if e.get("model_name") == "lstm"]
+    if not lstm_entries:
+        return None
+    return lstm_entries[-1]["best_mae_24h"]
+
+
 # ─── Result logging ───────────────────────────────────────────────────────────
 
 def log_result(log_path: str, entry: dict) -> None:
