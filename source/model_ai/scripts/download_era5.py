@@ -40,15 +40,13 @@ AREA = [35, 95, -5, 145]
 # Các giờ UTC khớp với IBTrACS (6h resolution)
 TIMES = ["00:00", "06:00", "12:00", "18:00"]
 
-# Pressure levels cần thiết cho wind shear và steering flow
-PRESSURE_LEVELS = ["200", "500", "700", "850"]
+# Chỉ 2 levels cần cho wind shear (200–850 hPa)
+PRESSURE_LEVELS = ["200", "850"]
 
-# Biến tải từ pressure levels
+# Chỉ u/v wind — đủ để tính wind shear
 PRESSURE_VARS = [
     "u_component_of_wind",   # U-wind → wind shear (200–850 hPa)
     "v_component_of_wind",   # V-wind → wind shear
-    "geopotential",          # Geopotential height → steering flow (500 hPa)
-    "relative_humidity",     # Relative humidity → intensity (700 hPa)
 ]
 
 # Biến tải từ single levels
@@ -94,81 +92,136 @@ def _download_with_retry(client, dataset: str, request: dict, output: Path):
 
 # ─── Download functions ───────────────────────────────────────────────────────
 
+def _merge_monthly_to_yearly(monthly_files: "list[Path]", yearly_path: Path) -> bool:
+    """Merge 12 file tháng thành 1 file năm, xóa file tháng sau khi merge."""
+    try:
+        import xarray as xr
+    except ImportError:
+        print("  [warn] xarray chưa cài — bỏ qua merge, giữ file tháng")
+        return False
+
+    try:
+        print(f"  [merge] Đang gộp {len(monthly_files)} tháng → {yearly_path.name} ...")
+        datasets = [xr.open_dataset(str(f)) for f in sorted(monthly_files)]
+        ds = xr.concat(datasets, dim="time")
+        ds.to_netcdf(str(yearly_path))
+        ds.close()
+        for d in datasets:
+            d.close()
+        size_mb = _size_mb(yearly_path)
+        print(f"  [merge] OK — {yearly_path.name} ({size_mb:.1f} MB)")
+
+        # Xóa file tháng
+        for f in monthly_files:
+            f.unlink()
+        print(f"  [merge] Đã xóa {len(monthly_files)} file tháng")
+        return True
+    except Exception as e:
+        print(f"  [merge] Lỗi: {e} — giữ nguyên file tháng")
+        return False
+
+
 def download_pressure_year(client, year: int) -> bool:
-    """Tải ERA5 pressure levels cho 1 năm."""
-    output = PRES_DIR / f"era5_pressure_{year}.nc"
-    if output.exists():
-        print(f"  [skip] {output.name} đã tồn tại ({_size_mb(output):.1f} MB)")
+    """Tải ERA5 pressure levels cho 1 năm theo tháng, sau đó merge thành 1 file năm."""
+    yearly_path = PRES_DIR / f"era5_pressure_{year}.nc"
+    if yearly_path.exists():
+        print(f"  [skip] {yearly_path.name} ({_size_mb(yearly_path):.1f} MB)")
         return True
 
-    request = {
-        "product_type": "reanalysis",
-        "variable":       PRESSURE_VARS,
-        "pressure_level": PRESSURE_LEVELS,
-        "year":           [str(year)],
-        "month":          _all_months(),
-        "day":            _all_days(),
-        "time":           TIMES,
-        "area":           AREA,
-        "format":         "netcdf",
-    }
-    return _download_with_retry(client, "reanalysis-era5-pressure-levels", request, output)
+    monthly_files = []
+    ok = True
+
+    for month in range(1, 13):
+        output = PRES_DIR / f"era5_pressure_{year}_{month:02d}.nc"
+        if output.exists():
+            print(f"  [skip] {output.name} ({_size_mb(output):.1f} MB)")
+            monthly_files.append(output)
+            continue
+
+        request = {
+            "product_type": "reanalysis",
+            "variable":       PRESSURE_VARS,
+            "pressure_level": PRESSURE_LEVELS,
+            "year":           [str(year)],
+            "month":          [f"{month:02d}"],
+            "day":            _all_days(),
+            "time":           TIMES,
+            "area":           AREA,
+            "format":         "netcdf",
+        }
+        success = _download_with_retry(client, "reanalysis-era5-pressure-levels", request, output)
+        if success:
+            monthly_files.append(output)
+        else:
+            ok = False
+
+    # Merge nếu đủ 12 tháng
+    if len(monthly_files) == 12:
+        _merge_monthly_to_yearly(monthly_files, yearly_path)
+    elif monthly_files:
+        print(f"  [warn] Chỉ có {len(monthly_files)}/12 tháng — chưa merge")
+
+    return ok
 
 
 def download_sst_year(client, year: int) -> bool:
-    """Tải ERA5 SST cho 1 năm."""
-    output = SST_DIR / f"era5_sst_{year}.nc"
-    if output.exists():
-        print(f"  [skip] {output.name} đã tồn tại ({_size_mb(output):.1f} MB)")
-        return True
+    """Tải ERA5 SST cho 1 năm, tách từng tháng để tránh giới hạn CDS."""
+    ok = True
 
-    request = {
-        "product_type": "reanalysis",
-        "variable":     SINGLE_VARS,
-        "year":         [str(year)],
-        "month":        _all_months(),
-        "day":          _all_days(),
-        "time":         TIMES,
-        "area":         AREA,
-        "format":       "netcdf",
-    }
-    return _download_with_retry(client, "reanalysis-era5-single-levels", request, output)
+    for month in range(1, 13):
+        output = SST_DIR / f"era5_sst_{year}_{month:02d}.nc"
+        if output.exists():
+            print(f"  [skip] {output.name} ({_size_mb(output):.1f} MB)")
+            continue
+
+        request = {
+            "product_type": "reanalysis",
+            "variable":     SINGLE_VARS,
+            "year":         [str(year)],
+            "month":        [f"{month:02d}"],
+            "day":          _all_days(),
+            "time":         TIMES,
+            "area":         AREA,
+            "format":       "netcdf",
+        }
+        success = _download_with_retry(client, "reanalysis-era5-single-levels", request, output)
+        if not success:
+            ok = False
+
+    return ok
 
 
 # ─── Check mode ───────────────────────────────────────────────────────────────
 
-def check_downloads(years: list[int]):
-    """In trạng thái các file đã tải."""
-    print(f"\n{'─'*55}")
-    print(f"  {'Year':<6} {'Pressure':>15} {'SST':>12}")
-    print(f"  {'─'*46}")
+def check_downloads(years: "list[int]"):
+    """In trạng thái các file đã tải (ưu tiên file năm, fallback file tháng)."""
+    print(f"\n{'─'*60}")
+    print(f"  {'Year':<6} {'Pressure':>30}")
+    print(f"  {'─'*50}")
 
-    total_mb = 0.0
-    missing  = []
+    total_mb   = 0.0
+    missing    = []
 
     for year in years:
-        pres = PRES_DIR / f"era5_pressure_{year}.nc"
-        sst  = SST_DIR  / f"era5_sst_{year}.nc"
-
-        pres_str = f"{_size_mb(pres):8.1f} MB" if pres.exists() else "   MISSING"
-        sst_str  = f"{_size_mb(sst):8.1f} MB"  if sst.exists()  else "   MISSING"
-
-        if pres.exists():
-            total_mb += _size_mb(pres)
+        yearly = PRES_DIR / f"era5_pressure_{year}.nc"
+        if yearly.exists():
+            mb = _size_mb(yearly)
+            pres_str = f"yearly ({mb:.1f} MB)"
+            total_mb += mb
         else:
-            missing.append(f"pressure/{year}")
+            monthly = sorted(PRES_DIR.glob(f"era5_pressure_{year}_*.nc"))
+            mb = sum(_size_mb(f) for f in monthly)
+            pres_str = f"{len(monthly):2d}/12 monthly ({mb:.1f} MB)" if monthly else "MISSING"
+            total_mb += mb
+            if not yearly.exists() and len(monthly) < 12:
+                missing.append(str(year))
 
-        if sst.exists():
-            total_mb += _size_mb(sst)
-        else:
-            missing.append(f"sst/{year}")
+        print(f"  {year:<6} {pres_str:>30}")
 
-        print(f"  {year:<6} {pres_str:>15} {sst_str:>12}")
-
-    print(f"{'─'*55}")
+    print(f"{'─'*60}")
     print(f"  Tổng: {total_mb:.1f} MB  ({total_mb/1024:.2f} GB)")
     if missing:
-        print(f"  Còn thiếu {len(missing)} file: {', '.join(missing[:5])}{'...' if len(missing) > 5 else ''}")
+        print(f"  Còn thiếu: {', '.join(missing[:5])}{'...' if len(missing) > 5 else ''}")
     else:
         print("  Tất cả file đã tải xong.")
 
@@ -189,10 +242,6 @@ def main():
     parser.add_argument(
         "--no-pressure", action="store_true",
         help="Bỏ qua tải pressure levels",
-    )
-    parser.add_argument(
-        "--no-sst", action="store_true",
-        help="Bỏ qua tải SST",
     )
     args = parser.parse_args()
 
@@ -234,12 +283,6 @@ def main():
             else:
                 fail_count += 1
 
-        if not args.no_sst:
-            success = download_sst_year(client, year)
-            if success:
-                ok_count += 1
-            else:
-                fail_count += 1
 
     print(f"\n{'='*55}")
     print(f"  Hoàn thành: {ok_count} file OK, {fail_count} file lỗi")

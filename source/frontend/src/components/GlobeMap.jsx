@@ -16,7 +16,7 @@ function intensityColor(vmax) {
   return '#a855f7'                           // C5  — tím
 }
 
-export default function GlobeMap({ selectedStorm }) {
+export default function GlobeMap({ selectedStorm, showActual = true, showPredicted = true }) {
   const globeRef     = useRef()
   const containerRef = useRef()
   const [size, setSize] = useState({ width: 800, height: 600 })
@@ -51,53 +51,58 @@ export default function GlobeMap({ selectedStorm }) {
     }
   }, [selectedStorm])
 
-  // --- Paths (track lịch sử + dự báo) ---
+  // --- Paths: 2 đường chính ---
   const pathsData = useMemo(() => {
     if (!selectedStorm) return []
-    const paths = []
+    const cutoff = selectedStorm.cutoff_index ?? selectedStorm.track.length
+    const paths  = []
 
-    // Track lịch sử — màu theo cường độ từng điểm
-    paths.push({
-      id: 'track',
-      points: selectedStorm.track,
-      colors: selectedStorm.track.map(p => intensityColor(p.vmax)),
-    })
-
-    // Đường dự báo AI — dashed cam
-    if (selectedStorm.forecast) {
+    // 1. Track thực tế toàn bộ — màu theo cường độ
+    if (showActual && selectedStorm.track.length >= 2) {
       paths.push({
-        id: 'forecast',
-        points: [
-          selectedStorm.forecast.origin,
-          ...selectedStorm.forecast.points,
-        ],
+        id:     'actual',
+        points: selectedStorm.track,
+        colors: selectedStorm.track.map(p => intensityColor(p.vmax)),
+      })
+    }
+
+    // 2. Track dự đoán từ điểm vào SCS — dashed cam
+    const pred = selectedStorm.predicted_track ?? []
+    if (showPredicted && pred.length >= 2) {
+      const cutoffPt = selectedStorm.track[cutoff - 1] ?? selectedStorm.track.at(-1)
+      paths.push({
+        id:     'predicted',
+        points: [cutoffPt, ...pred],
       })
     }
 
     return paths
-  }, [selectedStorm])
+  }, [selectedStorm, showActual, showPredicted])
 
-  // --- Markers tại mỗi điểm track ---
+  // --- Markers: chỉ hiện khi showActual ---
   const pointsData = useMemo(() => {
-    if (!selectedStorm) return []
+    if (!selectedStorm || !showActual) return []
     return selectedStorm.track
+  }, [selectedStorm, showActual])
+
+  // --- Marker điểm vào SCS ---
+  const cutoffData = useMemo(() => {
+    if (!selectedStorm) return []
+    const cutoff = selectedStorm.cutoff_index ?? 0
+    const pt = selectedStorm.track[cutoff]
+    return pt ? [pt] : []
   }, [selectedStorm])
 
-  // --- Vòng tròn sai số (uncertainty) tại điểm dự báo ---
-  const ringsData = useMemo(() => {
-    if (!selectedStorm?.forecast) return []
-    return selectedStorm.forecast.points
-  }, [selectedStorm])
-
-  // --- Nhãn "+24h" / "+48h" ---
+  // --- Nhãn điểm đầu dự đoán ---
   const labelsData = useMemo(() => {
-    if (!selectedStorm?.forecast) return []
-    return selectedStorm.forecast.points.map(p => ({
+    const pred = selectedStorm?.predicted_track ?? []
+    if (!pred.length) return []
+    return [pred[0]].map(p => ({
       lat:  p.lat + 0.8,
       lng:  p.lon,
-      text: `+${p.hour}h`,
+      text: t.tooltip?.forecastStart ?? 'Dự báo',
     }))
-  }, [selectedStorm])
+  }, [selectedStorm, t])
 
   // --- Tooltip khi hover điểm track (cập nhật khi đổi ngôn ngữ) ---
   const pointLabel = useCallback(d => `
@@ -131,13 +136,11 @@ export default function GlobeMap({ selectedStorm }) {
         // === Track lịch sử + đường dự báo ===
         pathsData={pathsData}
         pathPoints={d => d.points.map(p => [p.lat, p.lon, 0])}
-        pathColor={d =>
-          d.id === 'track' ? d.colors : '#f59e0b'
-        }
-        pathStroke={d => d.id === 'track' ? 2.5 : 2}
-        pathDashLength={d => d.id === 'forecast' ? 0.5 : 0}
-        pathDashGap={d => d.id === 'forecast' ? 0.25 : 0}
-        pathDashAnimateTime={d => d.id === 'forecast' ? 3000 : 0}
+        pathColor={d => d.id === 'actual' ? d.colors : '#f59e0b'}
+        pathStroke={d => d.id === 'actual' ? 2.5 : 2.5}
+        pathDashLength={d => d.id === 'predicted' ? 0.5 : 0}
+        pathDashGap={d => d.id === 'predicted' ? 0.25 : 0}
+        pathDashAnimateTime={d => d.id === 'predicted' ? 3000 : 0}
 
         // === Marker tại từng điểm track ===
         pointsData={pointsData}
@@ -148,14 +151,14 @@ export default function GlobeMap({ selectedStorm }) {
         pointRadius={0.28}
         pointLabel={pointLabel}
 
-        // === Vòng sai số tại điểm dự báo ===
-        ringsData={ringsData}
+        // === Vòng sóng tại điểm vào SCS ===
+        ringsData={cutoffData}
         ringLat="lat"
         ringLng="lon"
-        ringMaxRadius={d => d.mae_km / 111}   // km → độ (~111 km/độ)
-        ringColor={() => t => `rgba(245,158,11,${(1 - t) * 0.6})`}
-        ringPropagationSpeed={0.8}
-        ringRepeatPeriod={2500}
+        ringMaxRadius={2.5}
+        ringColor={() => () => 'rgba(255,255,255,0.6)'}
+        ringPropagationSpeed={0.6}
+        ringRepeatPeriod={2000}
 
         // === Nhãn +24h / +48h ===
         labelsData={labelsData}

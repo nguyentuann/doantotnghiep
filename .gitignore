@@ -1,15 +1,29 @@
 # Claude Code internal directory
 .claude/
 
+# Conversation context (local only)
+context/
+
+# Local planning docs
+commit.md
+
 # ======================
 # DATA FILES (large/generated)
 # ======================
-source/data/data_raw.csv
-source/model_ai/data/raw/
-source/model_ai/data/features/
-source/model_ai/data/processed/
-source/model_ai/data/era5/
+
+# Raw source data
+source/data/
 source/model_ai/data/DATA_DESCRIPTION.md
+
+# Model AI — tất cả data (generated + large files)
+source/model_ai/data/raw/
+source/model_ai/data/processed/
+source/model_ai/data/features/
+source/model_ai/data/era5/
+source/model_ai/data/noaa_sst/
+
+# Backend — historical tracks (generated từ script)
+source/backend/data/
 
 # ======================
 # PYTHON
