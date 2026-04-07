@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import GlobeMap from './components/GlobeMap'
+import MapView2D from './components/MapView2D'
 import StormInfoPanel from './components/StormInfoPanel'
 import StormSelector from './components/StormSelector'
 import { fetchStorms, fetchStormDetail } from './api/storms'
@@ -17,6 +18,7 @@ export default function App() {
   const [usingMock, setUsingMock]         = useState(false)
   const [showActual, setShowActual]       = useState(true)
   const [showPredicted, setShowPredicted] = useState(true)
+  const [viewMode, setViewMode]           = useState('3d')  // '3d' | '2d'
   const { locale, toggle, t }             = useLocale()
 
   useEffect(() => {
@@ -51,9 +53,18 @@ export default function App() {
               <h1>{t.appTitle}</h1>
               <p>{t.appSubtitle}</p>
             </div>
-            <button className="lang-toggle" onClick={toggle} title="Switch language">
-              {locale === 'vi' ? 'EN' : 'VI'}
-            </button>
+            <div className="header-buttons">
+              <button
+                className="view-toggle"
+                onClick={() => setViewMode(v => v === '3d' ? '2d' : '3d')}
+                title={t.viewToggleTitle}
+              >
+                {viewMode === '3d' ? '2D' : '3D'}
+              </button>
+              <button className="lang-toggle" onClick={toggle} title="Switch language">
+                {locale === 'vi' ? 'EN' : 'VI'}
+              </button>
+            </div>
           </div>
           {usingMock && (
             <p className="mock-warning">{t.mockWarning}</p>
@@ -114,11 +125,19 @@ export default function App() {
       </aside>
 
       <main className="map-container">
-        <GlobeMap
-          selectedStorm={selectedStorm}
-          showActual={showActual}
-          showPredicted={showPredicted}
-        />
+        {viewMode === '3d' ? (
+          <GlobeMap
+            selectedStorm={selectedStorm}
+            showActual={showActual}
+            showPredicted={showPredicted}
+          />
+        ) : (
+          <MapView2D
+            selectedStorm={selectedStorm}
+            showActual={showActual}
+            showPredicted={showPredicted}
+          />
+        )}
       </main>
     </div>
   )

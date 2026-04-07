@@ -112,12 +112,19 @@ def build_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         grp = grp.sort_values("ISO_TIME").reset_index(drop=True)
         n = len(grp)
 
-        for i in range(n):
-            row = grp.iloc[i]
+        # Cache arrays để tránh gọi iloc trong vòng lặp
+        lats_arr   = grp["LAT"].values
+        lons_arr   = grp["LON"].values
+        times_arr  = grp["ISO_TIME"].values
+        first_time = grp["ISO_TIME"].iloc[0]
+        vmax_arr   = grp.get("vmax", pd.Series([np.nan]*n)).values
+        pmin_arr   = grp.get("pmin", pd.Series([np.nan]*n)).values
+        dist_arr   = pd.to_numeric(grp.get("DIST2LAND", pd.Series([np.nan]*n)), errors="coerce").values
 
-            lat = row["LAT"]
-            lon = row["LON"]
-            t   = row["ISO_TIME"]
+        for i in range(n):
+            lat = float(lats_arr[i])
+            lon = float(lons_arr[i])
+            t   = pd.Timestamp(times_arr[i])
             month = t.month if pd.notna(t) else 8
 
             # --- Normalize vị trí ---
@@ -131,22 +138,23 @@ def build_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
                 speed_kmh = 0.0
                 direction = 0.0
             else:
-                prev = grp.iloc[i - 1]
-                dlat = lat - prev["LAT"]
-                dlon = lon - prev["LON"]
+                prev_lat = float(lats_arr[i - 1])
+                prev_lon = float(lons_arr[i - 1])
+                dlat = lat - prev_lat
+                dlon = lon - prev_lon
                 try:
-                    dist_km   = haversine_km(prev["LAT"], prev["LON"], lat, lon)
+                    dist_km   = haversine_km(prev_lat, prev_lon, lat, lon)
                     speed_kmh = dist_km / dt_h
-                    direction = bearing_deg(prev["LAT"], prev["LON"], lat, lon)
+                    direction = bearing_deg(prev_lat, prev_lon, lat, lon)
                 except Exception:
                     speed_kmh = 0.0
                     direction = 0.0
 
             # --- Gió & Áp suất ---
-            vmax = row.get("vmax", np.nan)
-            pmin = row.get("pmin", np.nan)
+            vmax = float(vmax_arr[i]) if not np.isnan(vmax_arr[i]) else np.nan
+            pmin = float(pmin_arr[i]) if not np.isnan(pmin_arr[i]) else np.nan
 
-            # --- SST climatology (placeholder — sẽ được thay bằng sst_actual từ ERA5 extractor) ---
+            # --- SST climatology ---
             sst_c = sst_climatology(month)
 
             # --- Mã hóa tuần hoàn tháng ---
@@ -154,22 +162,24 @@ def build_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             month_cos = math.cos(2 * math.pi * month / 12)
 
             # --- Tuổi cơn bão (giờ) ---
-            first_time = grp.iloc[0]["ISO_TIME"]
             if pd.notna(t) and pd.notna(first_time):
-                storm_age_h = (t - first_time).total_seconds() / 3600
+                storm_age_h = (t - pd.Timestamp(first_time)).total_seconds() / 3600
             else:
                 storm_age_h = i * dt_h
 
-            # --- Khoảng cách đến bờ (km) — 0% NaN trong IBTrACS ---
-            dist2land = float(pd.to_numeric(row.get("DIST2LAND", np.nan), errors="coerce"))
+            # --- Khoảng cách đến bờ (km) ---
+            dist2land = float(dist_arr[i]) if not np.isnan(dist_arr[i]) else np.nan
+
+            season_val = grp["SEASON"].iloc[0] if "SEASON" in grp.columns else np.nan
+            in_scs_val = bool(grp["in_scs"].iloc[i]) if "in_scs" in grp.columns else False
 
             records.append({
                 "SID":       sid,
-                "SEASON":    row.get("SEASON", np.nan),
+                "SEASON":    season_val,
                 "ISO_TIME":  t,
                 "LAT":       lat,
                 "LON":       lon,
-                "in_scs":    row.get("in_scs", False),
+                "in_scs":    in_scs_val,
                 # 13 features
                 "lat_norm":    lat_norm,
                 "lon_norm":    lon_norm,
@@ -195,15 +205,16 @@ def build_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             lambda s: s.interpolate(method="linear").ffill().bfill()
         )
 
-    # --- Nếu vẫn còn NaN → fill median toàn bộ ---
-    for col in feat_cfg["names"]:
+    # --- Nếu vẫn còn NaN → fill median (chỉ các cột đã có trong DataFrame) ---
+    existing_cols = [c for c in feat_cfg["names"] if c in feat_df.columns]
+    for col in existing_cols:
         if feat_df[col].isna().any():
             median_val = feat_df[col].median()
             feat_df[col] = feat_df[col].fillna(median_val)
             print(f"     [warn] {col}: còn NaN → fill median ({median_val:.2f})")
 
     print(f"[G2] Tổng rows feature: {len(feat_df):,} | Storms: {feat_df['SID'].nunique()}")
-    print(f"[G2] NaN còn lại: {feat_df[feat_cfg['names']].isna().sum().sum()}")
+    print(f"[G2] NaN còn lại: {feat_df[existing_cols].isna().sum().sum()}")
     return feat_df
 
 
@@ -277,10 +288,14 @@ def make_sequences(feat_df: pd.DataFrame, config: dict):
 # G3: Chuẩn hóa & lưu
 # ---------------------------------------------------------------------------
 
-def split_and_scale(X, y, meta, config):
+def split_and_scale(X, y, meta, config, tag: str = ""):
     """
     Chia train/val/test theo năm, fit StandardScaler trên train, transform tất cả.
-    Lưu scaler.pkl.
+    Lưu scaler.pkl (hoặc scaler_{tag}.pkl nếu tag được chỉ định).
+
+    Parameters
+    ----------
+    tag : str  — hậu tố phân biệt phiên bản features, ví dụ "14feat"
 
     Returns
     -------
@@ -289,7 +304,9 @@ def split_and_scale(X, y, meta, config):
     """
     split_cfg = config["split"]
     base_dir  = Path(__file__).parent.parent.parent  # model_ai/
-    scaler_path = base_dir / config["output"]["scaler_path"]
+    suffix    = f"_{tag}" if tag else ""
+    scaler_dir = (base_dir / config["output"]["scaler_path"]).parent
+    scaler_path = scaler_dir / f"scaler{suffix}.pkl"
     scaler_path.parent.mkdir(parents=True, exist_ok=True)
 
     season = meta["SEASON"].values
@@ -342,22 +359,33 @@ def split_and_scale(X, y, meta, config):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import argparse
     from src.g1_data.data_loader import load_clean_data
     from src.g2_g3_features.era5_extractor import extract_era5_features
 
-    cfg = load_config()
+    parser = argparse.ArgumentParser(description="G2/G3: Feature engineering + sequences")
+    parser.add_argument(
+        "--tag", default="14feat",
+        help="Hậu tố phân biệt phiên bản output (default: 14feat). "
+             "Dùng '' để ghi đè file mặc định sequences.npz/scaler.pkl.",
+    )
+    args = parser.parse_args()
+    tag  = args.tag
+
+    cfg      = load_config()
     base_dir = Path(__file__).parent.parent.parent  # model_ai/
+    suffix   = f"_{tag}" if tag else ""
 
     # G2: Tính features
     df_clean = load_clean_data(cfg)
     feat_df  = build_features(df_clean, cfg)
 
     # G2+: Bổ sung wind_shear (ERA5) và sst_actual (NOAA OISST)
-    # Các năm chưa có ERA5 → wind_shear fill median; sst_actual → fallback climatology
     feat_df = extract_era5_features(feat_df, cfg)
 
-    # Lưu feature_matrix.csv
-    feat_path = base_dir / cfg["data"]["feature_file"]
+    # Lưu feature_matrix_{tag}.csv (hoặc feature_matrix.csv nếu tag rỗng)
+    feat_stem = Path(cfg["data"]["feature_file"])
+    feat_path = base_dir / feat_stem.parent / f"{feat_stem.stem}{suffix}{feat_stem.suffix}"
     feat_path.parent.mkdir(parents=True, exist_ok=True)
     feat_df.to_csv(feat_path, index=False)
     size_mb = feat_path.stat().st_size / 1024 / 1024
@@ -366,11 +394,11 @@ if __name__ == "__main__":
     # G3: Tạo sequences
     X, y, meta = make_sequences(feat_df, cfg)
 
-    # G3: Split + Scale + lưu scaler
-    data = split_and_scale(X, y, meta, cfg)
+    # G3: Split + Scale + lưu scaler_{tag}.pkl
+    data = split_and_scale(X, y, meta, cfg, tag=tag)
 
-    # Lưu sequences (numpy .npz)
-    seq_path = base_dir / "data/features/sequences.npz"
+    # Lưu sequences_{tag}.npz
+    seq_path = base_dir / f"data/features/sequences{suffix}.npz"
     seq_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
         seq_path,
@@ -379,7 +407,14 @@ if __name__ == "__main__":
         X_test=data["X_test"],   y_test=data["y_test"],
     )
     print(f"[G3] Sequences lưu tại: {seq_path}")
-    print("\n=== G2/G3 HOÀN THÀNH ===")
+
+    # Xóa ERA5 wind_shear cache tạm — chỉ sau khi đã lưu xong tất cả
+    ws_cache = base_dir / "data/features/_wind_shear_cache.npy"
+    if ws_cache.exists():
+        ws_cache.unlink()
+        print("[ERA5] Đã xóa cache tạm _wind_shear_cache.npy")
+
+    print(f"\n=== G2/G3 HOÀN THÀNH (tag='{tag}') ===")
     print(f"    X_train: {data['X_train'].shape}")
     print(f"    X_val:   {data['X_val'].shape}")
     print(f"    X_test:  {data['X_test'].shape}")
