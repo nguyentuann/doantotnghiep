@@ -31,7 +31,7 @@ ERA5_DIR   = BASE_DIR / "data/era5"
 PRES_DIR   = ERA5_DIR / "pressure"
 SST_DIR    = ERA5_DIR / "sst"
 
-YEAR_START = 1980
+YEAR_START = 1986
 YEAR_END   = 2024
 
 # Vùng bao phủ Biển Đông + vùng đệm (North, West, South, East)
@@ -93,7 +93,7 @@ def _download_with_retry(client, dataset: str, request: dict, output: Path):
 # ─── Download functions ───────────────────────────────────────────────────────
 
 def _merge_monthly_to_yearly(monthly_files: "list[Path]", yearly_path: Path) -> bool:
-    """Merge 12 file tháng thành 1 file năm, xóa file tháng sau khi merge."""
+    """Merge 12 file tháng thành 1 file năm với cấu trúc sạch (valid_time làm dim chính)."""
     try:
         import xarray as xr
     except ImportError:
@@ -103,15 +103,26 @@ def _merge_monthly_to_yearly(monthly_files: "list[Path]", yearly_path: Path) -> 
     try:
         print(f"  [merge] Đang gộp {len(monthly_files)} tháng → {yearly_path.name} ...")
         datasets = [xr.open_dataset(str(f)) for f in sorted(monthly_files)]
-        ds = xr.concat(datasets, dim="time")
-        ds.to_netcdf(str(yearly_path))
-        ds.close()
+
+        # Dùng valid_time làm dim concat → cấu trúc sạch (valid_time, pl, lat, lon)
+        # Tránh tạo artifact dim time=12 gây đọc dữ liệu chậm 12x
+        processed = []
         for d in datasets:
+            if "valid_time" in d.coords and "time" in d.dims:
+                d = d.swap_dims({"time": "valid_time"}).drop_vars("time", errors="ignore")
+            processed.append(d)
+
+        ds = xr.concat(processed, dim="valid_time")
+        enc = {v: {"zlib": True, "complevel": 4}
+               for v in ds.data_vars}
+        ds.to_netcdf(str(yearly_path), encoding=enc)
+        ds.close()
+        for d in processed:
             d.close()
+
         size_mb = _size_mb(yearly_path)
         print(f"  [merge] OK — {yearly_path.name} ({size_mb:.1f} MB)")
 
-        # Xóa file tháng
         for f in monthly_files:
             f.unlink()
         print(f"  [merge] Đã xóa {len(monthly_files)} file tháng")
@@ -119,6 +130,64 @@ def _merge_monthly_to_yearly(monthly_files: "list[Path]", yearly_path: Path) -> 
     except Exception as e:
         print(f"  [merge] Lỗi: {e} — giữ nguyên file tháng")
         return False
+
+
+def fix_era5_files(years: "list[int]"):
+    """Fix các file năm đã merge sai (time=12 artifact) → cấu trúc sạch (valid_time, pl, lat, lon).
+    Chạy 1 lần duy nhất. Sau đó ERA5 extraction nhanh hơn ~10x.
+    """
+    try:
+        import xarray as xr
+    except ImportError:
+        print("[error] xarray chưa cài")
+        return
+
+    PRES_DIR.mkdir(parents=True, exist_ok=True)
+    fixed = 0
+
+    for year in years:
+        path = PRES_DIR / f"era5_pressure_{year}.nc"
+        if not path.exists():
+            print(f"  [fix] {year}: không có file — bỏ qua")
+            continue
+
+        # Kiểm tra có artifact time dim không
+        ds = xr.open_dataset(str(path))
+        has_artifact = ("time" in ds.dims and "time" not in ds.coords
+                        and "valid_time" in ds.coords)
+        ds.close()
+
+        if not has_artifact:
+            print(f"  [fix] {year}: đã OK — bỏ qua")
+            continue
+
+        print(f"  [fix] {year}: đang fix (time=12 → valid_time)...", flush=True)
+        tmp_path = path.with_suffix(".fix.nc")
+        try:
+            ds = xr.open_dataset(str(path))
+            # Collapse time artifact bằng mean(skipna) rồi swap dim
+            ds_fix = ds.mean(dim="time", skipna=True)
+            # Khôi phục valid_time làm coordinate dimension
+            if "valid_time" in ds.coords:
+                vt = ds["valid_time"].values
+                if vt.ndim > 1:
+                    vt = vt[0]  # lấy hàng đầu nếu 2D
+                ds_fix = ds_fix.assign_coords(valid_time=("valid_time", vt))
+            enc = {v: {"zlib": True, "complevel": 4} for v in ds_fix.data_vars}
+            ds_fix.to_netcdf(str(tmp_path), encoding=enc)
+            ds_fix.close()
+            ds.close()
+
+            tmp_path.replace(path)
+            size_mb = _size_mb(path)
+            print(f"  [fix] {year}: OK — {path.name} ({size_mb:.1f} MB)", flush=True)
+            fixed += 1
+        except Exception as e:
+            print(f"  [fix] {year}: lỗi — {e}")
+            if tmp_path.exists():
+                tmp_path.unlink()
+
+    print(f"\n[fix] Hoàn thành: {fixed}/{len(years)} file đã fix.")
 
 
 def download_pressure_year(client, year: int) -> bool:
@@ -243,6 +312,14 @@ def main():
         "--no-pressure", action="store_true",
         help="Bỏ qua tải pressure levels",
     )
+    parser.add_argument(
+        "--merge", action="store_true",
+        help="Chỉ merge file tháng thành file năm (không tải thêm)",
+    )
+    parser.add_argument(
+        "--fix", action="store_true",
+        help="Fix file năm bị merge sai (time=12 artifact) → cấu trúc sạch. Chạy 1 lần.",
+    )
     args = parser.parse_args()
 
     years = sorted(args.years)
@@ -252,6 +329,27 @@ def main():
     SST_DIR.mkdir(parents=True, exist_ok=True)
 
     if args.check:
+        check_downloads(years)
+        return
+
+    if args.fix:
+        fix_era5_files(years)
+        return
+
+    if args.merge:
+        PRES_DIR.mkdir(parents=True, exist_ok=True)
+        for year in years:
+            yearly_path = PRES_DIR / f"era5_pressure_{year}.nc"
+            if yearly_path.exists():
+                print(f"  [skip] {yearly_path.name} đã tồn tại")
+                continue
+            monthly_files = sorted(PRES_DIR.glob(f"era5_pressure_{year}_*.nc"))
+            if len(monthly_files) == 12:
+                _merge_monthly_to_yearly(monthly_files, yearly_path)
+            elif monthly_files:
+                print(f"  [warn] {year}: chỉ có {len(monthly_files)}/12 tháng — bỏ qua merge")
+            else:
+                print(f"  [skip] {year}: không có file tháng nào")
         check_downloads(years)
         return
 

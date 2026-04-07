@@ -88,12 +88,17 @@ class ERA5WindShear:
         if ds is None:
             return np.nan
         try:
-            pt   = ds.sel(time=np.datetime64(time), method="nearest") \
-                     .interp(latitude=lat, longitude=lon, method="linear")
-            u200 = float(pt["u"].sel(pressure_level=200))
-            v200 = float(pt["v"].sel(pressure_level=200))
-            u850 = float(pt["u"].sel(pressure_level=850))
-            v850 = float(pt["v"].sel(pressure_level=850))
+            # ERA5 files dùng 'valid_time' làm time coordinate (không phải 'time')
+            time_coord = "valid_time" if "valid_time" in ds.coords else "time"
+            pt = ds.sel({time_coord: np.datetime64(time)}, method="nearest")
+            if "time" in pt.dims:
+                pt = pt.mean(dim="time", skipna=True)
+            pt = pt.squeeze()
+            pt = pt.interp(latitude=lat, longitude=lon, method="linear")
+            u200 = float(pt["u"].sel(pressure_level=200.0, method="nearest"))
+            v200 = float(pt["v"].sel(pressure_level=200.0, method="nearest"))
+            u850 = float(pt["u"].sel(pressure_level=850.0, method="nearest"))
+            v850 = float(pt["v"].sel(pressure_level=850.0, method="nearest"))
             return math.sqrt((u200 - u850) ** 2 + (v200 - v850) ** 2)
         except Exception:
             return np.nan
@@ -166,6 +171,9 @@ def extract_era5_features(feat_df: pd.DataFrame, config: dict) -> pd.DataFrame:
     - sst_actual: từ NOAA OISST monthly mean. Fallback về sst_c climatology.
     - NaN wind_shear được fill bằng median cùng tháng.
 
+    Tối ưu tốc độ: batch theo (year, valid_time) — mỗi time-slice ERA5 chỉ load 1 lần,
+    interpolate toàn bộ điểm cùng timestamp cùng lúc bằng scipy RegularGridInterpolator.
+
     Parameters
     ----------
     feat_df : DataFrame output của build_features()
@@ -184,42 +192,151 @@ def extract_era5_features(feat_df: pd.DataFrame, config: dict) -> pd.DataFrame:
         feat_df["sst_actual"] = feat_df["sst_c"]
         return feat_df
 
+    try:
+        from scipy.interpolate import RegularGridInterpolator
+        HAS_SCIPY = True
+    except ImportError:
+        HAS_SCIPY = False
+
     era5_dir  = base_dir / config["data"]["era5_dir"]
     noaa_path = base_dir / config["data"]["noaa_sst"]
 
+    sst_ext = NOAAsstExtractor(noaa_path)
     wind_ext = ERA5WindShear(era5_dir)
-    sst_ext  = NOAAsstExtractor(noaa_path)
 
     n = len(feat_df)
     wind_shear_vals = np.full(n, np.nan, dtype=np.float32)
     sst_actual_vals = np.full(n, np.nan, dtype=np.float32)
 
     times = pd.to_datetime(feat_df["ISO_TIME"])
+    lats  = feat_df["LAT"].values
+    lons  = feat_df["LON"].values
 
     covered_ws  = 0
     covered_sst = 0
 
-    # Nhóm theo year-month → mở mỗi file ERA5 đúng 1 lần
-    ym_col = times.dt.to_period("M")
+    # Checkpoint: load cache nếu đã chạy dở
+    cache_path = base_dir / "data/features/_wind_shear_cache.npy"
+    if cache_path.exists():
+        cached = np.load(cache_path)
+        if cached.shape == wind_shear_vals.shape:
+            wind_shear_vals = cached.copy()
+            covered_ws = int(np.sum(~np.isnan(wind_shear_vals)))
+            print(f"[ERA5] Tìm thấy cache: {covered_ws:,}/{n:,} rows đã có wind_shear")
 
-    for ym, idx_list in feat_df.groupby(ym_col).groups.items():
-        for pos in idx_list:
-            row = feat_df.iloc[pos]
-            t   = times.iloc[pos]
+    # ── SST: vẫn dùng extractor cũ (NOAA file nhỏ, nhanh) ─────────────────────
+    print(f"[NOAA] Đang extract SST cho {n:,} rows...")
+    for pos in range(n):
+        st = sst_ext.get(lats[pos], lons[pos], times.iloc[pos])
+        sst_actual_vals[pos] = st
+        if not np.isnan(st):
+            covered_sst += 1
+        if (pos + 1) % 5000 == 0:
+            print(f"  [NOAA] {pos+1:,}/{n:,} rows done")
+    sst_ext.close()
 
-            ws = wind_ext.get(row["LAT"], row["LON"], t)
-            st = sst_ext.get(row["LAT"], row["LON"], t)
+    # ── Wind shear: load toàn bộ timestamps cần thiết mỗi năm 1 lần ─────────────
+    years = times.dt.year.values
+    unique_years = np.unique(years)
+    total_years  = len(unique_years)
 
-            wind_shear_vals[pos] = ws
-            sst_actual_vals[pos] = st
+    for yi, year in enumerate(unique_years):
+        year_mask = years == year
+        year_idxs = np.where(year_mask)[0]
 
-            if not np.isnan(ws):
-                covered_ws += 1
-            if not np.isnan(st):
-                covered_sst += 1
+        # Skip năm đã có đủ cache
+        if not np.isnan(wind_shear_vals[year_idxs]).any():
+            print(f"  [ERA5] {year} ({yi+1}/{total_years}): skip (đã có cache)", flush=True)
+            covered_ws += int(np.sum(~np.isnan(wind_shear_vals[year_idxs])))
+            continue
+
+        print(f"  [ERA5] {year} ({yi+1}/{total_years}): mở file...", flush=True)
+        ds = wind_ext._load(year)
+        if ds is None:
+            print(f"  [ERA5] {year}: không có file — bỏ qua", flush=True)
+            continue
+
+        try:
+            time_coord = "valid_time" if "valid_time" in ds.coords else "time"
+            era5_times = pd.DatetimeIndex(ds[time_coord].values)
+            era5_lats  = ds["latitude"].values
+            era5_lons  = ds["longitude"].values
+            pl         = ds["pressure_level"].values
+
+            idx_200 = int(np.argmin(np.abs(pl - 200.0)))
+            idx_850 = int(np.argmin(np.abs(pl - 850.0)))
+
+            # Load TOÀN BỘ u/v cả năm vào numpy 1 lần (đọc tuần tự → nhanh)
+            # shape: (valid_time, pressure_level, lat, lon) sau khi fix
+            print(f"    đọc u/v vào RAM...", flush=True)
+            if "time" in ds.dims:
+                # file cũ chưa fix: collapse time artifact trước
+                u_full = ds["u"].mean(dim="time", skipna=True).values.astype(np.float32)
+                v_full = ds["v"].mean(dim="time", skipna=True).values.astype(np.float32)
+            else:
+                u_full = ds["u"].values.astype(np.float32)  # (n_vt, n_pl, nlat, nlon)
+                v_full = ds["v"].values.astype(np.float32)
+            print(f"    u/v loaded: {u_full.shape}", flush=True)
+
+            # Tìm nearest ERA5 timestamp index cho storm rows trong năm
+            storm_times  = times.iloc[year_idxs]
+            nearest_idx  = era5_times.get_indexer(storm_times, method="nearest")
+            unique_t_idx = np.unique(nearest_idx)
+
+            # Wind shear field toàn bộ timestamps cần: (n_ts, nlat, nlon)
+            u200 = u_full[unique_t_idx, idx_200]   # numpy fancy indexing — fast
+            v200 = v_full[unique_t_idx, idx_200]
+            u850 = u_full[unique_t_idx, idx_850]
+            v850 = v_full[unique_t_idx, idx_850]
+
+            ws_all = np.sqrt((u200 - u850)**2 + (v200 - v850)**2)  # (n_ts, nlat, nlon)
+
+            # Lat tăng dần cho RegularGridInterpolator
+            if era5_lats[0] > era5_lats[-1]:
+                ws_all      = ws_all[:, ::-1, :]
+                interp_lats = era5_lats[::-1]
+            else:
+                interp_lats = era5_lats
+
+            # Map từ nearest_idx → vị trí trong unique_t_idx
+            t_pos_map = {ti: k for k, ti in enumerate(unique_t_idx)}
+
+            n_done = 0
+            for ti in unique_t_idx:
+                rows_at_t = year_idxs[nearest_idx == ti]
+                k = t_pos_map[ti]
+                ws_field = ws_all[k]   # (nlat, nlon)
+
+                interp = RegularGridInterpolator(
+                    (interp_lats, era5_lons), ws_field,
+                    method="linear", bounds_error=False, fill_value=np.nan,
+                )
+                pts     = np.stack([lats[rows_at_t], lons[rows_at_t]], axis=1)
+                ws_vals = interp(pts).astype(np.float32)
+
+                for kk, pos in enumerate(rows_at_t):
+                    wind_shear_vals[pos] = ws_vals[kk]
+                    if not np.isnan(ws_vals[kk]):
+                        covered_ws += 1
+                n_done += len(rows_at_t)
+
+            pct = n_done / year_mask.sum() * 100
+            print(f"  [ERA5] {year} ({yi+1}/{total_years}): {n_done:,} rows, {pct:.0f}% ✓", flush=True)
+
+        except Exception as e:
+            print(f"  [ERA5] {year}: lỗi — {e}", flush=True)
+
+        finally:
+            # Lưu checkpoint sau mỗi năm
+            np.save(cache_path, wind_shear_vals)
+            # Giải phóng RAM ngay sau mỗi năm
+            if year in wind_ext._cache and wind_ext._cache[year] is not None:
+                wind_ext._cache[year].close()
+                del wind_ext._cache[year]
 
     wind_ext.close()
-    sst_ext.close()
+    # Cache _wind_shear_cache.npy được giữ lại đến khi features.py lưu xong
+    # sequences_14feat.npz, sau đó features.py sẽ tự xóa.
 
     feat_df["wind_shear"] = wind_shear_vals
     feat_df["sst_actual"] = sst_actual_vals

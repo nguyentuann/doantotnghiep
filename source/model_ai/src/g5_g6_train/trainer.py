@@ -144,6 +144,7 @@ def run_training(
     y_val: np.ndarray,
     device: torch.device = None,
     scaler=None,
+    tag: str = "",
 ) -> dict:
     """
     Toàn bộ training loop cho 1 model.
@@ -170,12 +171,14 @@ def run_training(
     patience = m_cfg["patience"]         # 20
     residual = m_cfg.get("residual", False)
     base_dir = Path(__file__).parent.parent.parent
+    suffix   = f"_{tag}" if tag else ""
+    model_key = f"{model_name}{suffix}"   # e.g. "lstm_14feat" — dùng cho log + ckpt
 
     if residual and scaler is None:
         raise ValueError("residual=True nhưng chưa truyền scaler vào run_training()")
 
     print(f"\n{'='*55}")
-    print(f"  Training: {model_name.upper()}  |  device: {device}"
+    print(f"  Training: {model_key.upper()}  |  device: {device}"
           f"  |  residual: {residual}")
     print(f"{'='*55}")
 
@@ -224,7 +227,7 @@ def run_training(
     )
 
     # --- Early stopping ---
-    ckpt_path = base_dir / cfg["output"]["checkpoint_dir"] / f"best_{model_name}.pt"
+    ckpt_path = base_dir / cfg["output"]["checkpoint_dir"] / f"best_{model_key}.pt"
     stopper   = EarlyStopping(patience=patience, checkpoint_path=str(ckpt_path))
 
     # --- History ---
@@ -283,7 +286,7 @@ def run_training(
     print(f"    Checkpoint  = {ckpt_path}")
 
     result = {
-        "model_name":    model_name,
+        "model_name":    model_key,
         "best_mae_24h":  round(final_mae_24h, 2),
         "best_mae_48h":  round(final_mae_48h, 2),
         "epochs_trained": epochs_trained,

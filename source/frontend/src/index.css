@@ -217,6 +217,31 @@ html, body, #root {
   gap: 8px;
 }
 
+.header-buttons {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* View toggle 2D/3D */
+.view-toggle {
+  padding: 3px 10px;
+  background: transparent;
+  color: #60a5fa;
+  border: 1px solid #60a5fa;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.view-toggle:hover {
+  background: #60a5fa;
+  color: #fff;
+}
+
 /* Language toggle button */
 .lang-toggle {
   flex-shrink: 0;
@@ -242,4 +267,46 @@ html, body, #root {
   color: #f59e0b;
   font-size: 0.7rem;
   margin-top: 6px;
+}
+
+/* Leaflet overrides for dark theme */
+.leaflet-container {
+  background: #0a0a1a;
+  font-family: inherit;
+}
+
+.leaflet-control-zoom a {
+  background: #1a1a2e !important;
+  color: #eee !important;
+  border-color: #0f3460 !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: #0f3460 !important;
+}
+
+.leaflet-control-attribution {
+  background: rgba(26, 26, 46, 0.7) !important;
+  color: #666 !important;
+  font-size: 0.6rem !important;
+}
+
+.leaflet-control-attribution a {
+  color: #888 !important;
+}
+
+.leaflet-tooltip {
+  background: #1a1a2e !important;
+  color: #eee !important;
+  border: 1px solid #0f3460 !important;
+  border-radius: 8px !important;
+  padding: 8px 12px !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
+}
+
+.leaflet-tooltip-top::before {
+  border-top-color: #0f3460 !important;
+}
+.leaflet-tooltip-bottom::before {
+  border-bottom-color: #0f3460 !important;
 }

@@ -3,12 +3,15 @@ train_lstm.py — G5: Train LSTM Baseline
 -----------------------------------------
 Chạy:
     cd source/model_ai
-    python -m src.g5_g6_train.train_lstm
+    python -m src.g5_g6_train.train_lstm              # 14 features (mặc định)
+    python -m src.g5_g6_train.train_lstm --tag 14feat # 14 features (tường minh)
+    python -m src.g5_g6_train.train_lstm --tag ""     # 12 features (legacy)
 
 Checkpoint G5: Val MAE 24h < 200 km
-Output: models/checkpoints/best_lstm.pt
+Output: models/checkpoints/best_lstm_{tag}.pt
 """
 
+import argparse
 import torch
 import numpy as np
 from pathlib import Path
@@ -19,19 +22,27 @@ from src.g5_g6_train.utils import save_checkpoint, load_scaler
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--tag", default="14feat",
+                        help="Tag phân biệt phiên bản (default: 14feat)")
+    args = parser.parse_args()
+    tag  = args.tag
+
     cfg      = load_config()
     base_dir = Path(__file__).parent.parent.parent
+    suffix   = f"_{tag}" if tag else ""
 
-    # --- Load sequences đã chuẩn bị từ G3 ---
-    print("[G5] Load sequences...")
-    data     = np.load(base_dir / "data/features/sequences.npz")
-    X_train  = data["X_train"]   # (22567, 8, 12)
-    y_train  = data["y_train"]   # (22567, 4)
-    X_val    = data["X_val"]     # (2557, 8, 12)
-    y_val    = data["y_val"]     # (2557, 4)
+    # --- Load sequences ---
+    seq_path = base_dir / f"data/features/sequences{suffix}.npz"
+    print(f"[G5] Load sequences: {seq_path.name}")
+    data    = np.load(seq_path)
+    X_train = data["X_train"]
+    y_train = data["y_train"]
+    X_val   = data["X_val"]
+    y_val   = data["y_val"]
     print(f"  X_train={X_train.shape}  X_val={X_val.shape}")
 
-    scaler = load_scaler(cfg, base_dir)
+    scaler = load_scaler(cfg, base_dir, tag=tag)
 
     # --- Khởi tạo model ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -49,6 +60,7 @@ def main():
         y_val=y_val,
         device=device,
         scaler=scaler,
+        tag=tag,
     )
 
     # --- Checkpoint G5 ---
@@ -58,9 +70,7 @@ def main():
     print(f"\n{'='*55}")
     if mae_24h <= max_mae:
         print(f"  [G5] PASS: Val MAE 24h = {mae_24h:.1f} km <= {max_mae} km")
-
-        # Lưu thêm vào models/final/ để G6 có thể đọc kết quả baseline
-        final_path = base_dir / "models/final/lstm_baseline.pt"
+        final_path = base_dir / f"models/final/lstm_baseline{suffix}.pt"
         save_checkpoint(model, str(final_path))
         print(f"  LSTM baseline lưu tại: {final_path}")
     else:

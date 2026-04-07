@@ -73,23 +73,27 @@ def load_checkpoint(path: str, model: torch.nn.Module) -> torch.nn.Module:
 
 # ─── Scaler loading ───────────────────────────────────────────────────────────
 
-def load_scaler(cfg: dict, base_dir: Path):
-    """Load fitted StandardScaler từ scaler_path trong config."""
+def load_scaler(cfg: dict, base_dir: Path, tag: str = ""):
+    """Load fitted StandardScaler. Nếu tag != '' thì đọc scaler_{tag}.pkl."""
     import pickle
-    scaler_path = base_dir / cfg["output"]["scaler_path"]
+    suffix      = f"_{tag}" if tag else ""
+    scaler_dir  = (base_dir / cfg["output"]["scaler_path"]).parent
+    scaler_path = scaler_dir / f"scaler{suffix}.pkl"
     with open(scaler_path, "rb") as f:
         return pickle.load(f)
 
 
-def load_lstm_baseline_mae(base_dir: Path, cfg: dict):
-    """Đọc MAE 24h của LSTM từ results_log.json. Trả về float hoặc None."""
+def load_lstm_baseline_mae(base_dir: Path, cfg: dict, tag: str = ""):
+    """Đọc MAE 24h của LSTM từ results_log.json. Trả về float hoặc None.
+    tag: cùng tag với lần train LSTM (để lấy đúng phiên bản)."""
     import json
     log_path = base_dir / cfg["output"]["results_log"]
     if not log_path.exists():
         return None
     with open(log_path, "r", encoding="utf-8") as f:
         logs = json.load(f)
-    lstm_entries = [e for e in logs if e.get("model_name") == "lstm"]
+    model_key    = f"lstm_{tag}" if tag else "lstm"
+    lstm_entries = [e for e in logs if e.get("model_name") == model_key]
     if not lstm_entries:
         return None
     return lstm_entries[-1]["best_mae_24h"]
