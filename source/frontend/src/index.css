@@ -136,9 +136,77 @@ html, body, #root {
   flex-shrink: 0;
 }
 
+/* Đường thực tế — solid gradient */
+.legend-line-solid {
+  width: 24px;
+  height: 3px;
+  background: linear-gradient(to right, #60a5fa, #fbbf24, #ef4444);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* Đường dự đoán — dashed cam */
+.legend-line-dash {
+  width: 24px;
+  height: 0;
+  border-top: 2.5px dashed #f59e0b;
+  flex-shrink: 0;
+}
+
+/* Điểm vào SCS — dot trắng */
+.legend-dot-white {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  background: transparent;
+  flex-shrink: 0;
+  margin: 0 7px;
+}
+
 .legend-divider {
   border-top: 1px solid #0f3460;
   margin: 8px 0;
+}
+
+/* Layer toggle button */
+.layer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: 1px solid #1e3a5f;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  color: #e2e8f0;
+  font-size: 0.78rem;
+  margin-bottom: 6px;
+  transition: background 0.15s, border-color 0.15s;
+  text-align: left;
+}
+.layer-toggle:hover {
+  background: #0f3460;
+  border-color: #2d6a9f;
+}
+.layer-toggle.inactive {
+  opacity: 0.45;
+}
+.layer-toggle span:first-of-type {
+  flex: 1;
+}
+.toggle-badge {
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #0f3460;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+.layer-toggle.active .toggle-badge {
+  background: #1d4ed8;
+  color: #bfdbfe;
 }
 
 /* Header layout */

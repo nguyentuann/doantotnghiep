@@ -4,16 +4,18 @@ features.py
 G2: Tính feature engineering từ bao_bien_dong_clean.csv
 G3: Tạo sliding window sequences (X, y) và chuẩn hóa dữ liệu
 
-Features (12):
+Features (14):
   lat_norm, lon_norm      — vị trí normalize về [0,1] trong SCS box
   dlat, dlon              — thay đổi vị trí so với bước trước (degrees/6h)
   speed_kmh               — tốc độ di chuyển (Haversine / 6h)
   direction               — hướng di chuyển (0–360°, 0=Bắc)
   vmax                    — gió cực đại (kt)
   pmin                    — áp suất cực tiểu (hPa)
-  sst_c                   — nhiệt độ bề mặt biển (climatology)
+  sst_actual              — SST thực tế (NOAA OISST, fallback climatology)
   month_sin, month_cos    — mã hóa tuần hoàn tháng
   storm_age_h             — tuổi cơn bão (giờ kể từ điểm đầu tiên)
+  dist2land               — khoảng cách đến bờ (km)
+  wind_shear              — wind shear 200–850 hPa từ ERA5 (m/s)
 
 Targets (4):
   lat_24h, lon_24h        — vị trí sau 24h (bước +4)
@@ -144,7 +146,7 @@ def build_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             vmax = row.get("vmax", np.nan)
             pmin = row.get("pmin", np.nan)
 
-            # --- SST climatology ---
+            # --- SST climatology (placeholder — sẽ được thay bằng sst_actual từ ERA5 extractor) ---
             sst_c = sst_climatology(month)
 
             # --- Mã hóa tuần hoàn tháng ---
@@ -177,7 +179,8 @@ def build_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
                 "direction":   direction,
                 "vmax":        vmax,
                 "pmin":        pmin,
-                "sst_c":       sst_c,
+                "sst_c":       sst_c,   # giữ lại để era5_extractor dùng làm fallback
+                "sst_actual":  sst_c,   # sẽ được overwrite bởi extract_era5_features()
                 "month_sin":   month_sin,
                 "month_cos":   month_cos,
                 "storm_age_h": storm_age_h,
@@ -340,6 +343,7 @@ def split_and_scale(X, y, meta, config):
 
 if __name__ == "__main__":
     from src.g1_data.data_loader import load_clean_data
+    from src.g2_g3_features.era5_extractor import extract_era5_features
 
     cfg = load_config()
     base_dir = Path(__file__).parent.parent.parent  # model_ai/
@@ -347,6 +351,10 @@ if __name__ == "__main__":
     # G2: Tính features
     df_clean = load_clean_data(cfg)
     feat_df  = build_features(df_clean, cfg)
+
+    # G2+: Bổ sung wind_shear (ERA5) và sst_actual (NOAA OISST)
+    # Các năm chưa có ERA5 → wind_shear fill median; sst_actual → fallback climatology
+    feat_df = extract_era5_features(feat_df, cfg)
 
     # Lưu feature_matrix.csv
     feat_path = base_dir / cfg["data"]["feature_file"]

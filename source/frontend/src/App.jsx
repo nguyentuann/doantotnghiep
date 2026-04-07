@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import GlobeMap from './components/GlobeMap'
 import StormInfoPanel from './components/StormInfoPanel'
 import StormSelector from './components/StormSelector'
-import { fetchStorms } from './api/storms'
+import { fetchStorms, fetchStormDetail } from './api/storms'
 import { MOCK_STORMS } from './api/mockData'
 import { useLocale } from './i18n/LocaleContext'
 
@@ -13,7 +13,10 @@ export default function App() {
   const [storms, setStorms]               = useState([])
   const [selectedStorm, setSelectedStorm] = useState(null)
   const [loading, setLoading]             = useState(true)
+  const [detailLoading, setDetailLoading] = useState(false)
   const [usingMock, setUsingMock]         = useState(false)
+  const [showActual, setShowActual]       = useState(true)
+  const [showPredicted, setShowPredicted] = useState(true)
   const { locale, toggle, t }             = useLocale()
 
   useEffect(() => {
@@ -25,6 +28,19 @@ export default function App() {
       })
       .finally(() => setLoading(false))
   }, [])
+
+  async function handleSelect(stormItem) {
+    if (!stormItem) { setSelectedStorm(null); return }
+    if (usingMock) {
+      setSelectedStorm(MOCK_STORMS.find(s => s.sid === stormItem.sid) ?? stormItem)
+      return
+    }
+    setDetailLoading(true)
+    fetchStormDetail(stormItem.sid)
+      .then(setSelectedStorm)
+      .catch(() => setSelectedStorm(stormItem))
+      .finally(() => setDetailLoading(false))
+  }
 
   return (
     <div className="app-container">
@@ -50,8 +66,9 @@ export default function App() {
             storms={storms}
             loading={loading}
             selected={selectedStorm}
-            onSelect={setSelectedStorm}
+            onSelect={handleSelect}
           />
+          {detailLoading && <p style={{ color: '#aaa', fontSize: '0.8rem' }}>{t.loading}</p>}
         </div>
 
         {selectedStorm && (
@@ -59,6 +76,33 @@ export default function App() {
         )}
 
         <div className="legend">
+          {/* --- Toggle 2 đường --- */}
+          <button
+            className={`layer-toggle ${showActual ? 'active' : 'inactive'}`}
+            onClick={() => setShowActual(v => !v)}
+          >
+            <div className="legend-line-solid" style={{ opacity: showActual ? 1 : 0.3 }} />
+            <span>{t.legendActual}</span>
+            <span className="toggle-badge">{showActual ? t.toggleOn : t.toggleOff}</span>
+          </button>
+
+          <button
+            className={`layer-toggle ${showPredicted ? 'active' : 'inactive'}`}
+            onClick={() => setShowPredicted(v => !v)}
+          >
+            <div className="legend-line-dash" style={{ opacity: showPredicted ? 1 : 0.3 }} />
+            <span>{t.legendPredicted}</span>
+            <span className="toggle-badge">{showPredicted ? t.toggleOn : t.toggleOff}</span>
+          </button>
+
+          <div className="legend-item" style={{ marginTop: 4 }}>
+            <div className="legend-dot-white" />
+            <span>{t.legendScsEntry}</span>
+          </div>
+
+          <div className="legend-divider" />
+
+          {/* --- Cường độ --- */}
           <h3>{t.legendTitle}</h3>
           {INTENSITY_KEYS.map((key, i) => (
             <div key={key} className="legend-item">
@@ -66,16 +110,15 @@ export default function App() {
               <span>{t[key]}</span>
             </div>
           ))}
-          <div className="legend-divider" />
-          <div className="legend-item">
-            <div className="legend-dash" />
-            <span>{t.legendForecast}</span>
-          </div>
         </div>
       </aside>
 
       <main className="map-container">
-        <GlobeMap selectedStorm={selectedStorm} />
+        <GlobeMap
+          selectedStorm={selectedStorm}
+          showActual={showActual}
+          showPredicted={showPredicted}
+        />
       </main>
     </div>
   )
