@@ -93,7 +93,8 @@ def load_lstm_baseline_mae(base_dir: Path, cfg: dict, tag: str = ""):
     with open(log_path, "r", encoding="utf-8") as f:
         logs = json.load(f)
     model_key    = f"lstm_{tag}" if tag else "lstm"
-    lstm_entries = [e for e in logs if e.get("model_name") == model_key]
+    lstm_entries = [e for e in logs
+                    if e.get("model_name") == model_key and "best_mae_24h" in e]
     if not lstm_entries:
         return None
     return lstm_entries[-1]["best_mae_24h"]

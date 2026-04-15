@@ -115,7 +115,7 @@ def _print_comparison(base_dir: Path, cfg: dict, tag: str = "") -> None:
 
     latest = {}
     for e in logs:
-        if e["model_name"] in targets:
+        if e["model_name"] in targets and "best_mae_24h" in e:
             latest[e["model_name"]] = e
 
     if len(latest) < 2:

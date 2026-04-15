@@ -113,31 +113,101 @@ def classify_trajectories(X_test: np.ndarray, scaler) -> np.ndarray:
 
 # ─── Load model ───────────────────────────────────────────────────────────────
 
-def load_model_checkpoint(model_name: str, cfg: dict):
+def _detect_hidden_size(state_dict: dict, model_name: str) -> int:
+    """Tự detect hidden_size từ shape của layer đầu tiên trong checkpoint."""
+    if model_name == "lstm":
+        w = state_dict.get("lstm.weight_ih_l0")
+        return int(w.shape[0] / 4) if w is not None else 128
+    elif model_name == "bilstm":
+        w = state_dict.get("bilstm.weight_ih_l0")
+        return int(w.shape[0] / 4) if w is not None else 128
+    elif model_name == "transformer":
+        w = state_dict.get("input_proj.weight")
+        return int(w.shape[0]) if w is not None else 128
+    return 128
+
+
+def _detect_n_features(state_dict: dict, model_name: str) -> int:
+    """Detect n_features từ shape của input layer trong checkpoint."""
+    if model_name == "lstm":
+        w = state_dict.get("lstm.weight_ih_l0")
+        return int(w.shape[1]) if w is not None else 14
+    elif model_name == "bilstm":
+        w = state_dict.get("bilstm.weight_ih_l0")
+        return int(w.shape[1]) if w is not None else 14
+    elif model_name == "transformer":
+        w = state_dict.get("input_proj.weight")
+        return int(w.shape[1]) if w is not None else 14
+    return 14
+
+
+def _detect_lookback(state_dict: dict, model_name: str) -> int:
+    """Detect lookback từ pos_embed shape (Transformer) hoặc trả về None."""
+    if model_name == "transformer":
+        w = state_dict.get("pos_embed")
+        return int(w.shape[1]) if w is not None else None
+    return None
+
+
+def _detect_num_layers(state_dict: dict, model_name: str) -> int:
+    """Detect num_layers bằng cách đếm layer keys."""
+    prefix = {"lstm": "lstm", "bilstm": "bilstm"}.get(model_name)
+    if prefix is None:
+        # Transformer: đếm encoder layers
+        layer_idx = 0
+        while f"encoder.layers.{layer_idx}.self_attn.in_proj_weight" in state_dict:
+            layer_idx += 1
+        return max(layer_idx, 1)
+    layer = 0
+    while f"{prefix}.weight_ih_l{layer}" in state_dict:
+        layer += 1
+    return max(layer, 1)
+
+
+def load_model_checkpoint(model_name: str, cfg: dict, tag: str = "14feat"):
     """
-    Thử load từ models/checkpoints/best_{name}.pt trước,
-    rồi models/final/{name}.pt.
+    Thử load từ models/checkpoints/best_{name}_{tag}.pt trước,
+    rồi models/final/{name}_*_{tag}.pt.
+    Auto-detect hidden_size và num_layers từ checkpoint.
     Trả về (model, ckpt_path) hoặc (None, None) nếu không tìm thấy.
     """
+    suffix = f"_{tag}" if tag else ""
+    ckpt_dir  = BASE_DIR / cfg["output"]["checkpoint_dir"]
+    final_dir = BASE_DIR / "models" / "final"
     candidates = [
-        BASE_DIR / cfg["output"]["checkpoint_dir"] / f"best_{model_name}.pt",
-        BASE_DIR / "models" / "final" / f"{model_name}.pt",
+        ckpt_dir  / f"best_{model_name}{suffix}.pt",
+        final_dir / f"{model_name}_baseline{suffix}.pt",
+        final_dir / f"{model_name}_best{suffix}.pt",
+        ckpt_dir  / f"best_{model_name}.pt",
+        final_dir / f"{model_name}.pt",
     ]
-    found_path = None
-    for p in candidates:
-        if p.exists():
-            found_path = p
-            break
-
+    found_path = next((p for p in candidates if p.exists()), None)
     if found_path is None:
         return None, None
 
     try:
-        model = build_model(model_name, cfg)
         state_dict = torch.load(str(found_path), map_location="cpu", weights_only=True)
+
+        # Patch config với kiến trúc thực tế từ checkpoint
+        patched_cfg = {**cfg, "model": {**cfg["model"]},
+                       "features": {**cfg["features"]}}
+        patched_cfg["model"]["hidden_size"] = _detect_hidden_size(state_dict, model_name)
+        patched_cfg["model"]["num_layers"]  = _detect_num_layers(state_dict, model_name)
+
+        n_feat = _detect_n_features(state_dict, model_name)
+        patched_cfg["features"]["n_features"] = n_feat
+
+        lookback = _detect_lookback(state_dict, model_name)
+        if lookback is not None:
+            patched_cfg["model"]["lookback"] = lookback
+
+        model = build_model(model_name, patched_cfg)
         model.load_state_dict(state_dict)
         model.eval()
-        print(f"  [load] {model_name.upper()} <- {found_path}")
+        h = patched_cfg["model"]["hidden_size"]
+        l = patched_cfg["model"]["num_layers"]
+        lb = patched_cfg["model"]["lookback"]
+        print(f"  [load] {model_name.upper()} <- {found_path.name}  (hidden={h}, layers={l}, feat={n_feat}, lookback={lb})")
         return model, found_path
     except Exception as e:
         print(f"  [warn] Không load được {model_name}: {e}")
@@ -168,6 +238,7 @@ COLORS = {
     "lstm":        "#3b82f6",
     "bilstm":      "#10b981",
     "transformer": "#f59e0b",
+    "ensemble":    "#8b5cf6",
 }
 
 
@@ -427,17 +498,26 @@ def plot_folium_tracks(X_test: np.ndarray, y_test: np.ndarray,
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--tag", default="14feat",
+                        help="Tag pipeline (vd: '14feat', '') — mặc định '14feat'")
+    args = parser.parse_args()
+    tag    = args.tag
+    suffix = f"_{tag}" if tag else ""
+
     print("\n" + "=" * 60)
-    print("  G7 — Evaluate: CLIPER baseline + Model metrics")
+    print(f"  G7 — Evaluate: CLIPER baseline + Model metrics  [tag='{tag}']")
     print("=" * 60)
 
     cfg = load_config()
 
     # Paths
-    seq_path    = BASE_DIR / "data" / "features" / "sequences.npz"
-    scaler_path = BASE_DIR / cfg["output"]["scaler_path"]
+    seq_path    = BASE_DIR / "data" / "features" / f"sequences{suffix}.npz"
+    scaler_path = BASE_DIR / cfg["output"]["scaler_path"].replace(".pkl", f"{suffix}.pkl")
     log_path    = BASE_DIR / cfg["output"]["results_log"]
-    fig_dir     = BASE_DIR / cfg["output"]["figures_dir"]
+    # Lưu figures vào subfolder riêng theo tag — tránh ghi đè giữa các phiên bản
+    fig_dir     = BASE_DIR / cfg["output"]["figures_dir"] / (tag if tag else "legacy")
     ckpt_pct    = cfg["checkpoints"]["g7_min_skill_score_pct"]
 
     # --- Load data ---
@@ -484,7 +564,7 @@ def main():
     skill_scores_dict = {}
 
     for mname in model_names:
-        model, ckpt_path = load_model_checkpoint(mname, cfg)
+        model, ckpt_path = load_model_checkpoint(mname, cfg, tag=tag)
         if model is None:
             print(f"  [skip] {mname.upper()} — không tìm thấy checkpoint")
             continue
@@ -508,7 +588,7 @@ def main():
 
         log_result(str(log_path), {
             "stage":          "G7_evaluate",
-            "model_name":     mname,
+            "model_name":     f"{mname}{suffix}",
             "mae_24h":        round(metrics["mae_24h"], 2),
             "rmse_24h":       round(metrics["rmse_24h"], 2),
             "mae_48h":        round(metrics["mae_48h"], 2),
@@ -517,6 +597,59 @@ def main():
             "skill_score_48h": round(ss_48, 2),
             "checkpoint":     str(ckpt_path),
         })
+
+    # --- Ensemble ---
+    # Chỉ ensemble các model tốt hơn CLIPER (skill_24h > 0)
+    cliper_mae24 = cliper_metrics["mae_24h"]
+    good_models  = {k: v for k, v in all_preds.items()
+                    if k != "cliper" and all_metrics[k]["mae_24h"] < cliper_mae24}
+
+    def _make_ensemble(preds_dict, label):
+        if len(preds_dict) < 2:
+            return
+        names_str = ", ".join(k.upper() for k in preds_dict)
+        print(f"\n  ENSEMBLE-{label} ({len(preds_dict)} models: {names_str})")
+        ens_pred  = np.mean(list(preds_dict.values()), axis=0)
+        ens_m     = compute_metrics(ens_pred, y_test)
+        ens_ss24  = skill_score(cliper_mae24, ens_m["mae_24h"])
+        ens_ss48  = skill_score(cliper_metrics["mae_48h"], ens_m["mae_48h"])
+        print(f"    MAE 24h = {ens_m['mae_24h']:.1f} km  |  "
+              f"RMSE 24h = {ens_m['rmse_24h']:.1f} km  |  "
+              f"Skill 24h = {ens_ss24:.1f}%")
+        print(f"    MAE 48h = {ens_m['mae_48h']:.1f} km  |  "
+              f"RMSE 48h = {ens_m['rmse_48h']:.1f} km  |  "
+              f"Skill 48h = {ens_ss48:.1f}%")
+
+        key = f"ensemble_{label.lower()}"
+        all_preds[key]   = ens_pred
+        all_metrics[key] = ens_m
+        skill_scores_dict[key] = ens_ss24
+        log_result(str(log_path), {
+            "stage":           "G7_evaluate",
+            "model_name":      f"{key}{suffix}",
+            "mae_24h":         round(ens_m["mae_24h"], 2),
+            "rmse_24h":        round(ens_m["rmse_24h"], 2),
+            "mae_48h":         round(ens_m["mae_48h"], 2),
+            "rmse_48h":        round(ens_m["rmse_48h"], 2),
+            "skill_score_24h": round(ens_ss24, 2),
+            "skill_score_48h": round(ens_ss48, 2),
+            "models":          list(preds_dict.keys()),
+        })
+
+    # Ensemble all models (tất cả có checkpoint)
+    all_model_preds = {k: v for k, v in all_preds.items() if k != "cliper"}
+    _make_ensemble(all_model_preds, "ALL")
+
+    # Ensemble top-2 (2 models tốt nhất theo MAE 24h)
+    sorted_models = sorted(all_model_preds.items(),
+                           key=lambda x: all_metrics[x[0]]["mae_24h"])
+    if len(sorted_models) >= 2:
+        top2 = dict(sorted_models[:2])
+        _make_ensemble(top2, "TOP2")
+
+    # Ensemble chỉ các models tốt hơn CLIPER
+    if len(good_models) >= 2:
+        _make_ensemble(good_models, "GOOD")
 
     # --- Trajectory labels ---
     print("\n[4] Phân loại quỹ đạo...")
