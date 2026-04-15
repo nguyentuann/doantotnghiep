@@ -9,13 +9,13 @@ geography:
   lat_max: 22.0
   lon_min: 102.0
   lon_max: 120.0
-  year_start: 1980
+  year_start: 1960
   year_end: 2024
 
 # --- Đường dẫn dữ liệu ---
 data:
   raw_file:     'data/raw/ibtracs_WP.csv'        # IBTrACS WP — dữ liệu gốc, KHÔNG sửa
-  clean_file:   'data/processed/bao_bien_dong_clean.csv'
+  clean_file:   'data/processed/bao_bien_dong_1960.csv'
   feature_file: 'data/features/feature_matrix.csv'
   sst_dir:      'data/raw/sst/'                  # (legacy) NOAA OI SST .nc theo từng năm
   era5_dir:     'data/era5/'                     # ERA5 wind shear (u/v 200+850 hPa)
@@ -39,13 +39,11 @@ features:
     - direction
     - vmax
     - pmin
-    - sst_actual
     - month_sin
     - month_cos
     - storm_age_h
     - dist2land
-    - wind_shear
-  n_features: 14             # 13 features gốc + wind_shear (ERA5) + sst_actual thay sst_c
+  n_features: 12             # 12feat_clean: bỏ sst_actual + wind_shear (noise theo permutation importance)
   wind_primary:   'WMO_WIND' # Ưu tiên 1: gió 10 phút (JMA/WMO chuẩn)
   wind_cma:       'CMA_WIND' # Ưu tiên 2: CMA — chính xác nhất cho SCS
   wind_fallback:  'USA_WIND' # Fallback:  gió 1 phút (JTWC)
@@ -61,11 +59,11 @@ model:
   anchor_steps: [4, 8]  # Bước 4=24h, bước 8=48h — model trực tiếp dự đoán 2 điểm này
   hidden_size: 128
   num_layers: 2
-  dropout: 0.4
+  dropout: 0.3
   batch_size: 32
-  lr: 0.001
-  max_epochs: 150
-  patience: 20       # Early stopping
+  lr: 0.0005
+  max_epochs: 200
+  patience: 30       # Early stopping
   residual: true     # Model học residual từ CLIPER → pred = CLIPER + model_output
 
 # --- Loss function ---
@@ -75,7 +73,7 @@ loss:
 
 # --- Train/Val/Test split (theo NĂM — không random) ---
 split:
-  train: [1980, 2016]
+  train: [1960, 2016]
   val:   [2017, 2020]
   test:  [2021, 2024]
 

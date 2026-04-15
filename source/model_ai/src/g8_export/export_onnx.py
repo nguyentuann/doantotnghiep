@@ -28,19 +28,20 @@ BASE_DIR = Path(__file__).parent.parent.parent   # source/model_ai/
 
 # ─── Find best model ──────────────────────────────────────────────────────────
 
-def find_best_model_from_log(log_path: Path) -> tuple[str, Path] | tuple[None, None]:
+def find_best_model_from_log(log_path: Path, required_tag: str = "14feat") -> tuple[str, Path] | tuple[None, None]:
     """
-    Đọc results_log.json, tìm entry có stage="G7_evaluate" và "mae_24h",
+    Đọc results_log.json, tìm entry có stage="G7_evaluate"/"G5_train"/"G6_train" và "mae_24h",
     chọn model có mae_24h thấp nhất (bỏ qua "cliper").
-    Trả về (model_name, ckpt_path) hoặc (None, None).
+    Lọc theo required_tag nếu có entry phù hợp; nếu không, bỏ qua filter.
+    Trả về (model_name, ckpt_path, tag) hoặc (None, None, None).
     """
     if not log_path.exists():
-        return None, None
+        return None, None, None
 
     with open(log_path, "r", encoding="utf-8") as f:
         logs = json.load(f)
 
-    candidates = [
+    all_candidates = [
         e for e in logs
         if (e.get("stage") in ("G7_evaluate", "G5_train", "G6_train")
             or "mae_24h" in e)
@@ -48,46 +49,75 @@ def find_best_model_from_log(log_path: Path) -> tuple[str, Path] | tuple[None, N
         and "mae_24h" in e
     ]
 
-    if not candidates:
-        return None, None
+    # Lọc theo tag yêu cầu; nếu không có entry phù hợp → để fallback xử lý
+    def _extract_tag(e):
+        raw = e.get("model_name", "")
+        for arch in ("transformer", "bilstm", "lstm"):
+            if raw.startswith(arch):
+                return raw[len(arch):].lstrip("_")
+        return ""
+
+    tagged = [e for e in all_candidates if _extract_tag(e) == required_tag]
+
+    if not tagged:
+        # Không có entry với tag yêu cầu trong log → trả None để fallback tìm file
+        return None, None, None
+
+    if not all_candidates:
+        return None, None, None
+
+    candidates = tagged
 
     best_entry = min(candidates, key=lambda e: e["mae_24h"])
-    model_name = best_entry["model_name"]
+    raw_name   = best_entry["model_name"]
+    for arch in ("transformer", "bilstm", "lstm"):
+        if raw_name.startswith(arch):
+            model_name = arch
+            tag = raw_name[len(arch):].lstrip("_")
+            break
+    else:
+        model_name = raw_name
+        tag = ""
 
-    # Cố gắng resolve checkpoint path
     ckpt_from_log = best_entry.get("checkpoint")
     if ckpt_from_log:
         p = Path(ckpt_from_log)
         if p.exists():
-            return model_name, p
+            return model_name, p, tag
 
-    return model_name, None
+    return model_name, None, tag
 
 
-def find_checkpoint_fallback(cfg: dict) -> tuple[str, Path] | tuple[None, None]:
-    """
-    Fallback: tìm theo thứ tự ưu tiên.
-    """
+def find_checkpoint_fallback(cfg: dict, required_tag: str = "14feat") -> tuple[str, Path, str] | tuple[None, None, None]:
+    """Fallback: tìm checkpoint theo tag ưu tiên, rồi legacy."""
     final_dir = BASE_DIR / "models" / "final"
     ckpt_dir  = BASE_DIR / cfg["output"]["checkpoint_dir"]
 
-    fallback_order = [
-        (final_dir / "bilstm.pt",      "bilstm"),
-        (final_dir / "transformer.pt", "transformer"),
-        (final_dir / "lstm.pt",        "lstm"),
-        (final_dir / "lstm_baseline.pt", "lstm"),
+    # Ưu tiên tag được yêu cầu, sau đó tag còn lại
+    tag_order = [required_tag, ""] if required_tag else ["14feat", ""]
+    tag_order = list(dict.fromkeys(tag_order))  # dedup
+
+    fallback_named = [
+        ("lstm_baseline", "lstm"),
+        ("bilstm_best",   "bilstm"),
+        ("transformer_best", "transformer"),
     ]
-    for path, name in fallback_order:
-        if path.exists():
-            return name, path
 
-    # best_*.pt trong checkpoints/
-    for name in ["bilstm", "transformer", "lstm"]:
-        p = ckpt_dir / f"best_{name}.pt"
-        if p.exists():
-            return name, p
+    for tag in tag_order:
+        suffix = f"_{tag}" if tag else ""
+        for stem, name in fallback_named:
+            p = final_dir / f"{stem}{suffix}.pt"
+            if p.exists():
+                return name, p, tag
 
-    return None, None
+    for tag in tag_order:
+        suffix = f"_{tag}" if tag else ""
+        for name in ["lstm", "bilstm", "transformer"]:
+            p = ckpt_dir / f"best_{name}{suffix}.pt"
+            if p.exists():
+                return name, p, tag
+
+    return None, None, None
 
 
 # ─── Export ───────────────────────────────────────────────────────────────────
@@ -178,32 +208,45 @@ def verify_onnx(model: torch.nn.Module, onnx_path: Path,
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--tag", default="14feat",
+                        help="Tag pipeline (vd: '14feat', '') — mặc định '14feat'")
+    args = parser.parse_args()
+    required_tag = args.tag
+
     print("\n" + "=" * 60)
     print("  G8 — Export: PyTorch → ONNX")
     print("=" * 60)
 
     cfg = load_config()
 
-    log_path  = BASE_DIR / cfg["output"]["results_log"]
-    onnx_path = BASE_DIR / cfg["output"]["onnx_model"]
-
-    lookback   = cfg["model"]["lookback"]     # 8
-    n_features = cfg["features"]["n_features"]  # 12
+    log_path = BASE_DIR / cfg["output"]["results_log"]
+    lookback = cfg["model"]["lookback"]
 
     # --- Tìm best model ---
-    print("\n[1] Tìm best model...")
-    model_name, ckpt_path = find_best_model_from_log(log_path)
+    print(f"\n[1] Tìm best model (tag='{required_tag}')...")
+    model_name, ckpt_path, tag = find_best_model_from_log(log_path, required_tag)
 
     if model_name is None or ckpt_path is None:
         print("  Không tìm thấy trong results_log — thử fallback...")
-        model_name, ckpt_path = find_checkpoint_fallback(cfg)
+        model_name, ckpt_path, tag = find_checkpoint_fallback(cfg, required_tag)
 
     if model_name is None or ckpt_path is None:
         print("  [error] Không tìm thấy checkpoint nào. Hãy chạy G5/G6 trước.")
         return
 
-    print(f"  Best model : {model_name.upper()}")
+    # n_features theo tag
+    suffix     = f"_{tag}" if tag else ""
+    n_features = cfg["features"]["n_features"]   # 14 (từ config)
+    onnx_path  = BASE_DIR / cfg["output"]["onnx_model"].replace(
+        ".onnx", f"{suffix}.onnx"
+    )
+
+    print(f"  Best model : {model_name.upper()} (tag='{tag}')")
     print(f"  Checkpoint : {ckpt_path}")
+    print(f"  ONNX output: {onnx_path}")
+    print(f"  n_features : {n_features}")
 
     # --- Load model ---
     print("\n[2] Load model...")

@@ -380,8 +380,13 @@ if __name__ == "__main__":
     df_clean = load_clean_data(cfg)
     feat_df  = build_features(df_clean, cfg)
 
-    # G2+: Bổ sung wind_shear (ERA5) và sst_actual (NOAA OISST)
-    feat_df = extract_era5_features(feat_df, cfg)
+    # G2+: Bổ sung wind_shear (ERA5) và sst_actual (NOAA OISST) — chỉ khi cần
+    feat_names = cfg["features"]["names"]
+    need_era5 = "wind_shear" in feat_names or "sst_actual" in feat_names
+    if need_era5:
+        feat_df = extract_era5_features(feat_df, cfg)
+    else:
+        print("[G2] Bỏ qua ERA5/SST — không có trong feature list")
 
     # Lưu feature_matrix_{tag}.csv (hoặc feature_matrix.csv nếu tag rỗng)
     feat_stem = Path(cfg["data"]["feature_file"])

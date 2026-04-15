@@ -9,7 +9,7 @@ import numpy as np
 from pathlib import Path
 
 # ONNX model path (relative từ source/backend/)
-_ONNX_PATH = Path(__file__).parent.parent.parent / "model_ai/models/final/model_best.onnx"
+_ONNX_PATH = Path(__file__).parent.parent.parent / "model_ai/models/final/model_best_14feat.onnx"
 
 _session = None
 _input_name = None
@@ -100,7 +100,7 @@ def rolling_predict(track: list[dict], cutoff_index: int, max_steps: int = 20) -
         if len(current) < 8:
             break
         try:
-            x      = prepare_input(current)                  # (1, 8, 12)
+            x      = prepare_input(current)                  # (1, 8, 14)
             pred   = predict(x)                              # (1, 4)
             coords = unscale_output(pred, scaler)            # [lat24, lon24, lat48, lon48]
             lat_24h, lon_24h = float(coords[0]), float(coords[1])
