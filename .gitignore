@@ -6,6 +6,7 @@ context/
 
 # Local planning docs
 commit.md
+source/model_ai/command_model.md
 
 # ======================
 # DATA FILES (large/generated)
@@ -54,11 +55,18 @@ build/
 # ======================
 # MODEL ARTIFACTS
 # ======================
+# Scalers (root level)
 source/model_ai/models/*.pkl
+# Checkpoints & final weights (subdirectories)
+source/model_ai/models/checkpoints/
+source/model_ai/models/final/
+# Legacy patterns (root level)
 source/model_ai/models/*.h5
 source/model_ai/models/*.pt
 source/model_ai/models/*.pth
 source/model_ai/models/*.onnx
+source/model_ai/models/*.onnx.data
+# Results (generated figures + logs)
 source/model_ai/results/
 
 # ======================
