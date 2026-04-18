@@ -1,24 +1,15 @@
 """
-preprocessor.py — Tính 14 features từ raw track points, scale bằng scaler_14feat.pkl
---------------------------------------------------------------------------------------
-Input : list[TrackPoint] (tối thiểu 8 điểm)
-Output: np.ndarray shape (1, 8, 14) — sẵn sàng đưa vào ONNX model
+preprocessor.py — Tính features từ raw track points, scale bằng scaler.pkl
+---------------------------------------------------------------------------
+Tự động detect 12 hoặc 14 features dựa trên scaler được load.
 
-14 features (theo thứ tự khớp với sequences_14feat.npz):
-  0  lat_norm      — latitude normalized to SCS box
-  1  lon_norm      — longitude normalized to SCS box
-  2  dlat          — lat displacement from previous step
-  3  dlon          — lon displacement from previous step
-  4  speed_kmh     — translation speed (km/h)
-  5  direction     — bearing 0–360°
-  6  vmax          — max wind (kt)
-  7  pmin          — min pressure (hPa)
-  8  sst_actual    — SST (°C) from NOAA OISST; fallback to climatology
-  9  month_sin     — seasonal encoding sin
-  10 month_cos     — seasonal encoding cos
-  11 storm_age_h   — hours since storm first point in window
-  12 dist2land     — distance to nearest land (km); default 252 km if unknown
-  13 wind_shear    — ERA5 |V200 - V850| (m/s); fallback to monthly climatology
+12 features (scaler_wp_full.pkl):
+  lat_norm, lon_norm, dlat, dlon, speed_kmh, direction,
+  vmax, pmin, month_sin, month_cos, storm_age_h, dist2land
+
+14 features (scaler_wp_steering.pkl) — thêm:
+  12  steering_u  — mean U wind (850+200 hPa) ±5° box (m/s)
+  13  steering_v  — mean V wind (850+200 hPa) ±5° box (m/s)
 """
 
 import math
@@ -26,39 +17,38 @@ import pickle
 import numpy as np
 from pathlib import Path
 
-_SCALER_PATH = Path(__file__).parent.parent.parent / "model_ai/models/scaler_14feat.pkl"
+# Thử load scaler wp_steering trước (14 feat), fallback về wp_full (12 feat)
+_BASE = Path(__file__).parent.parent.parent / "model_ai/models"
+_SCALER_STEERING = _BASE / "scaler_wp_steering.pkl"
+_SCALER_WP_FULL  = _BASE / "scaler_wp_full.pkl"
 
-# SCS box để normalize lat/lon (khớp với config.yaml)
+_SCALER_PATH = _SCALER_STEERING if _SCALER_STEERING.exists() else _SCALER_WP_FULL
+
+# SCS box để normalize lat/lon
 _LAT_MIN, _LAT_MAX = 8.0, 22.0
 _LON_MIN, _LON_MAX = 102.0, 120.0
-
-# SST climatology fallback (tháng 1–12)
-_SST_CLIM = {
-    1: 26.2, 2: 26.0, 3: 26.8, 4: 28.0, 5: 29.2, 6: 30.1,
-    7: 30.3, 8: 30.2, 9: 29.5, 10: 28.4, 11: 27.5, 12: 26.8,
-}
-
-# Wind shear climatology (ERA5 median per month, computed from feature_matrix_14feat.csv)
-_WIND_SHEAR_CLIM = {
-    1: 9.91, 2: 9.07, 3: 9.42,  4: 9.82,  5: 9.07,  6: 10.13,
-    7: 10.22, 8: 9.62, 9: 9.22, 10: 9.95, 11: 10.34, 12: 11.18,
-}
-
-# dist2land default khi không có giá trị (median trên toàn dataset)
 _DIST2LAND_DEFAULT = 252.0
 
-_scaler = None
+_scaler    = None
+_n_features = None
 
 
 def _load_scaler():
-    global _scaler
+    global _scaler, _n_features, _SCALER_PATH
     if _scaler is not None:
         return _scaler
     if not _SCALER_PATH.exists():
         raise FileNotFoundError(f"Không tìm thấy scaler: {_SCALER_PATH}")
     with open(_SCALER_PATH, "rb") as f:
         _scaler = pickle.load(f)
+    _n_features = _scaler.n_features_in_
+    print(f"[preprocessor] Scaler loaded: {_SCALER_PATH.name} ({_n_features} features)")
     return _scaler
+
+
+def get_n_features() -> int:
+    _load_scaler()
+    return _n_features
 
 
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
@@ -78,25 +68,136 @@ def _bearing(lat1, lon1, lat2, lon2) -> float:
     return (math.degrees(math.atan2(x, y)) + 360) % 360
 
 
-def build_feature_matrix(points: list[dict]) -> np.ndarray:
+# ─── ERA5 Steering Flow Extractor (lazy, cache 1 year) ────────────────────────
+
+class _ERA5SteeringExtractor:
+    """Trích xuất steering_u, steering_v từ ERA5 tại điểm (lat, lon, time)."""
+
+    _ERA5_DIR = Path(__file__).parent.parent.parent / "model_ai/data/era5/pressure"
+    _RADIUS   = 5.0  # degrees box bán kính
+
+    def __init__(self):
+        self._year  = None
+        self._ds    = None
+        self._u_full = None   # (n_vt, n_pl, nlat, nlon)
+        self._v_full = None
+        self._times  = None
+        self._lats   = None
+        self._lons   = None
+        self._idx200 = None
+        self._idx850 = None
+
+    def _load_year(self, year: int):
+        if self._year == year:
+            return self._ds is not None
+        # Đóng file cũ
+        if self._ds is not None:
+            try:
+                self._ds.close()
+            except Exception:
+                pass
+            self._ds = self._u_full = self._v_full = None
+
+        path = self._ERA5_DIR / f"era5_pressure_{year}.nc"
+        if not path.exists():
+            self._year = year
+            return False
+
+        try:
+            import xarray as xr
+            import pandas as pd
+            ds = xr.open_dataset(str(path))
+
+            tc = "valid_time" if "valid_time" in ds.coords else "time"
+            pl = ds["pressure_level"].values
+
+            if "time" in ds.dims:
+                u = ds["u"].mean(dim="time", skipna=True).values.astype(np.float32)
+                v = ds["v"].mean(dim="time", skipna=True).values.astype(np.float32)
+            else:
+                u = ds["u"].values.astype(np.float32)
+                v = ds["v"].values.astype(np.float32)
+
+            self._ds     = ds
+            self._times  = pd.DatetimeIndex(ds[tc].values)
+            self._lats   = ds["latitude"].values
+            self._lons   = ds["longitude"].values
+            self._idx200 = int(np.argmin(np.abs(pl - 200.0)))
+            self._idx850 = int(np.argmin(np.abs(pl - 850.0)))
+            self._u_full = u
+            self._v_full = v
+            self._year   = year
+            return True
+        except Exception as e:
+            print(f"[ERA5Steering] Lỗi load {path.name}: {e}")
+            self._year = year
+            return False
+
+    def get(self, lat: float, lon: float, iso_time) -> tuple[float, float]:
+        """Trả về (steering_u, steering_v) tại (lat, lon, time). Fallback (0, 0)."""
+        try:
+            import pandas as pd
+            ts = pd.Timestamp(iso_time)
+            if not self._load_year(ts.year):
+                return 0.0, 0.0
+
+            ti = self._times.get_indexer([np.datetime64(ts)], method="nearest")[0]
+            if ti < 0:
+                return 0.0, 0.0
+
+            u200 = self._u_full[ti, self._idx200]
+            u850 = self._u_full[ti, self._idx850]
+            v200 = self._v_full[ti, self._idx200]
+            v850 = self._v_full[ti, self._idx850]
+
+            lats, lons = self._lats, self._lons
+            lat_mask = (lats >= lat - self._RADIUS) & (lats <= lat + self._RADIUS)
+            lon_mask = (lons >= lon - self._RADIUS) & (lons <= lon + self._RADIUS)
+
+            if lat_mask.sum() == 0 or lon_mask.sum() == 0:
+                li = int(np.argmin(np.abs(lats - lat)))
+                lo = int(np.argmin(np.abs(lons - lon)))
+                su = float((u200[li, lo] + u850[li, lo]) / 2)
+                sv = float((v200[li, lo] + v850[li, lo]) / 2)
+            else:
+                su_field = (u200 + u850) / 2
+                sv_field = (v200 + v850) / 2
+                su = float(np.nanmean(su_field[np.ix_(lat_mask, lon_mask)]))
+                sv = float(np.nanmean(sv_field[np.ix_(lat_mask, lon_mask)]))
+
+            return su, sv
+        except Exception:
+            return 0.0, 0.0
+
+    def close(self):
+        if self._ds is not None:
+            try:
+                self._ds.close()
+            except Exception:
+                pass
+
+
+_steering_extractor = _ERA5SteeringExtractor()
+
+
+# ─── Feature matrix ───────────────────────────────────────────────────────────
+
+def build_feature_matrix(points: list[dict],
+                         steering_flows: list[tuple] | None = None) -> np.ndarray:
     """
-    Tính 14 features cho danh sách điểm track.
+    Tính features cho danh sách điểm track.
 
     Parameters
     ----------
-    points : list of dict với keys:
-        lat, lon          — bắt buộc
-        vmax              — optional, default 35 kt
-        pmin              — optional, default 1000 hPa
-        iso_time          — optional, dùng để tính month/storm_age
-        dist2land         — optional (km), default _DIST2LAND_DEFAULT
-        wind_shear        — optional (m/s), default monthly climatology
+    points        : list of dict (lat, lon, vmax, pmin, iso_time, dist2land)
+    steering_flows: list of (steering_u, steering_v) per point, hoặc None
 
     Returns
     -------
-    np.ndarray shape (N, 14)
+    np.ndarray shape (N, 12) hoặc (N, 14) tuỳ theo steering_flows
     """
     rows = []
+    use_steering = steering_flows is not None
 
     for i, pt in enumerate(points):
         lat  = pt["lat"]
@@ -104,21 +205,18 @@ def build_feature_matrix(points: list[dict]) -> np.ndarray:
         vmax = pt.get("vmax") or 35.0
         pmin = pt.get("pmin") or 1000.0
 
-        # Thời gian
         iso_time = pt.get("iso_time")
         if iso_time:
             import pandas as pd
             t = pd.Timestamp(iso_time)
             month = t.month
         else:
-            month = 9  # peak typhoon season
+            month = 9
         storm_age_h = i * 6.0
 
-        # Position features
         lat_norm = (lat - _LAT_MIN) / (_LAT_MAX - _LAT_MIN)
         lon_norm = (lon - _LON_MIN) / (_LON_MAX - _LON_MIN)
 
-        # Displacement
         if i > 0:
             prev = points[i - 1]
             dlat      = lat - prev["lat"]
@@ -128,62 +226,103 @@ def build_feature_matrix(points: list[dict]) -> np.ndarray:
         else:
             dlat, dlon, speed_kmh, direction = 0.0, 0.0, 0.0, 0.0
 
-        sst_actual  = pt.get("sst_actual") or _SST_CLIM.get(month, 28.0)
-        month_sin   = math.sin(2 * math.pi * month / 12)
-        month_cos   = math.cos(2 * math.pi * month / 12)
-        dist2land   = pt.get("dist2land") or _DIST2LAND_DEFAULT
-        wind_shear  = pt.get("wind_shear") or _WIND_SHEAR_CLIM.get(month, 9.8)
+        month_sin = math.sin(2 * math.pi * month / 12)
+        month_cos = math.cos(2 * math.pi * month / 12)
+        dist2land = pt.get("dist2land") or _DIST2LAND_DEFAULT
 
-        rows.append([
+        row = [
             lat_norm, lon_norm,
             dlat, dlon,
             speed_kmh, direction,
             vmax, pmin,
-            sst_actual,
             month_sin, month_cos,
-            storm_age_h,
-            dist2land,
-            wind_shear,
-        ])
+            storm_age_h, dist2land,
+        ]
+
+        if use_steering:
+            su, sv = steering_flows[i]
+            row += [float(su), float(sv)]
+
+        rows.append(row)
 
     return np.array(rows, dtype=np.float32)
 
 
 def prepare_input(points: list[dict], lookback: int = 8) -> np.ndarray:
     """
-    Lấy lookback điểm cuối, tính features, scale, trả về (1, lookback, 14).
+    Lấy lookback điểm cuối, tính features, scale.
+
+    Tự động detect 12 hoặc 14 features từ scaler.
+    Nếu 14 features, trích xuất steering_u/v từ ERA5.
+
+    Returns
+    -------
+    np.ndarray shape (1, lookback, n_features)
     """
-    scaler = _load_scaler()
+    scaler    = _load_scaler()
+    n_feat    = _n_features
+    window    = points[-lookback:]
 
-    # Lấy lookback điểm cuối
-    window = points[-lookback:]
-    feat_matrix = build_feature_matrix(window)   # (lookback, 14)
+    steering_flows = None
+    if n_feat == 14:
+        # Trích xuất steering flow từ ERA5 cho từng điểm trong window
+        # Điểm không có iso_time hoặc ngoài ERA5 range → fallback (0, 0)
+        steering_flows = []
+        last_valid_su, last_valid_sv = 0.0, 0.0
+        for pt in window:
+            iso_time = pt.get("iso_time")
+            if iso_time:
+                su, sv = _steering_extractor.get(pt["lat"], pt["lon"], iso_time)
+                if su != 0.0 or sv != 0.0:
+                    last_valid_su, last_valid_sv = su, sv
+                else:
+                    # Dùng giá trị hợp lệ cuối cùng (persistence)
+                    su, sv = last_valid_su, last_valid_sv
+            else:
+                su, sv = last_valid_su, last_valid_sv
+            steering_flows.append((su, sv))
 
-    # Scale (scaler fit trên 14 features)
-    feat_scaled = scaler.transform(feat_matrix)   # (lookback, 14)
+    feat_matrix = build_feature_matrix(window, steering_flows)   # (lookback, n_feat)
+    feat_scaled = scaler.transform(feat_matrix)                   # (lookback, n_feat)
+    return feat_scaled[np.newaxis].astype(np.float32)             # (1, lookback, n_feat)
 
-    return feat_scaled[np.newaxis].astype(np.float32)  # (1, lookback, 14)
 
-
-def unscale_output(pred: np.ndarray, scaler) -> np.ndarray:
+def compute_cliper(x_scaled: np.ndarray, scaler) -> np.ndarray:
     """
-    Inverse-transform 4 target values [lat_24h, lon_24h, lat_48h, lon_48h].
-    Scaler được fit trên 14 features; lat_norm và lon_norm là features 0 và 1.
+    Tính CLIPER prediction từ input đã scaled.
+
+    Parameters
+    ----------
+    x_scaled : (1, lookback, n_feat)
+    scaler   : fitted StandardScaler
+
+    Returns
+    -------
+    np.ndarray shape (1, 4) — [lat_24h, lon_24h, lat_48h, lon_48h] in degrees
     """
-    lat_mean = scaler.mean_[0]
-    lat_std  = scaler.scale_[0]
-    lon_mean = scaler.mean_[1]
-    lon_std  = scaler.scale_[1]
+    last_step_scaled = x_scaled[0, -1, :]
+    last_step_orig   = scaler.inverse_transform(last_step_scaled.reshape(1, -1))[0]
 
-    lat_24h = pred[0, 0] * lat_std + lat_mean
-    lon_24h = pred[0, 1] * lon_std + lon_mean
-    lat_48h = pred[0, 2] * lat_std + lat_mean
-    lon_48h = pred[0, 3] * lon_std + lon_mean
+    lat_current = last_step_orig[0] * (_LAT_MAX - _LAT_MIN) + _LAT_MIN
+    lon_current = last_step_orig[1] * (_LON_MAX - _LON_MIN) + _LON_MIN
+    dlat = last_step_orig[2]
+    dlon = last_step_orig[3]
 
-    # Denormalize từ [0,1] về lat/lon thực
-    lat_24h = lat_24h * (_LAT_MAX - _LAT_MIN) + _LAT_MIN
-    lon_24h = lon_24h * (_LON_MAX - _LON_MIN) + _LON_MIN
-    lat_48h = lat_48h * (_LAT_MAX - _LAT_MIN) + _LAT_MIN
-    lon_48h = lon_48h * (_LON_MAX - _LON_MIN) + _LON_MIN
+    return np.array([[
+        lat_current + 4 * dlat,
+        lon_current + 4 * dlon,
+        lat_current + 8 * dlat,
+        lon_current + 8 * dlon,
+    ]], dtype=np.float32)
 
-    return np.array([lat_24h, lon_24h, lat_48h, lon_48h])
+
+def decode_output(pred: np.ndarray, x_scaled: np.ndarray, scaler) -> np.ndarray:
+    """
+    Model output (delta) + CLIPER → lat/lon thực (degrees).
+
+    Returns
+    -------
+    np.ndarray shape (4,) — [lat_24h, lon_24h, lat_48h, lon_48h]
+    """
+    cliper = compute_cliper(x_scaled, scaler)
+    return (cliper + pred)[0]

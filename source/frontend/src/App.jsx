@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import GlobeMap from './components/GlobeMap'
 import MapView2D from './components/MapView2D'
 import StormInfoPanel from './components/StormInfoPanel'
+import IntensityChart from './components/IntensityChart'
+import ModelMetricsTable from './components/ModelMetricsTable'
 import StormSelector from './components/StormSelector'
 import { fetchStorms, fetchStormDetail } from './api/storms'
 import { MOCK_STORMS } from './api/mockData'
@@ -83,8 +85,13 @@ export default function App() {
         </div>
 
         {selectedStorm && (
-          <StormInfoPanel storm={selectedStorm} />
+          <>
+            <StormInfoPanel storm={selectedStorm} />
+            <IntensityChart storm={selectedStorm} />
+          </>
         )}
+
+        <ModelMetricsTable />
 
         <div className="legend">
           {/* --- Toggle 2 đường --- */}

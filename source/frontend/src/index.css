@@ -102,6 +102,77 @@ html, body, #root {
   font-weight: 500;
 }
 
+/* ── Intensity Chart ── */
+.chart-container {
+  padding: 12px 16px;
+  border-bottom: 1px solid #0f3460;
+}
+
+.chart-title {
+  font-size: 0.7rem;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+/* ── Model Metrics Table ── */
+.metrics-container {
+  padding: 12px 16px;
+  border-bottom: 1px solid #0f3460;
+}
+
+.metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+  margin-top: 4px;
+}
+
+.metrics-table th {
+  color: #888;
+  font-weight: 500;
+  text-align: right;
+  padding: 3px 4px;
+  border-bottom: 1px solid #0f3460;
+}
+
+.metrics-table th:first-child { text-align: left; }
+
+.metrics-table td {
+  padding: 3px 4px;
+  text-align: right;
+  border-bottom: 1px solid rgba(15,52,96,0.5);
+  color: #ccc;
+}
+
+.metrics-table td:first-child { text-align: left; }
+
+.metrics-table .row-best td { color: #fff; background: rgba(249,115,22,0.12); }
+.metrics-table .row-cliper td { color: #666; font-style: italic; }
+
+.tag-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  background: #0f3460;
+  color: #60a5fa;
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-right: 4px;
+}
+
+.model-name { color: #ddd; }
+
+.skill-positive { color: #34d399; font-weight: 600; }
+.skill-zero     { color: #666; }
+
+.metrics-note {
+  font-size: 0.65rem;
+  color: #666;
+  margin-top: 6px;
+  font-style: italic;
+}
+
 .legend {
   padding: 16px;
 }

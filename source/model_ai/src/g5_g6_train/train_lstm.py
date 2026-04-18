@@ -42,6 +42,9 @@ def main():
     y_val   = data["y_val"]
     print(f"  X_train={X_train.shape}  X_val={X_val.shape}")
 
+    # Tự động detect n_features từ sequences (hỗ trợ 12/14/N features)
+    cfg["features"]["n_features"] = X_train.shape[2]
+
     scaler = load_scaler(cfg, base_dir, tag=tag)
 
     # --- Khởi tạo model ---

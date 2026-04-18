@@ -160,6 +160,144 @@ class NOAAsstExtractor:
 
 
 # =====================================================================
+# Batch extraction: Steering Flow (steering_u, steering_v)
+# =====================================================================
+
+def extract_steering_features(feat_df: pd.DataFrame, config: dict,
+                               radius_deg: float = 5.0) -> pd.DataFrame:
+    """
+    Thêm cột steering_u và steering_v vào DataFrame features.
+
+    Steering flow = trung bình U/V tại (850+200 hPa) trong vùng ±radius_deg
+    xung quanh tâm bão. Đây là luồng gió môi trường "cuốn" bão di chuyển.
+
+    Parameters
+    ----------
+    feat_df    : DataFrame output của build_features()
+    config     : dict từ config.yaml
+    radius_deg : bán kính box trung bình (degrees), mặc định 5°
+
+    Returns
+    -------
+    DataFrame với 2 cột mới: steering_u (m/s), steering_v (m/s)
+    """
+    base_dir = Path(__file__).parent.parent.parent
+    feat_df  = feat_df.copy()
+
+    if not HAS_XARRAY:
+        print("[ERA5-Steering] xarray chưa cài — fallback về 0.0")
+        feat_df["steering_u"] = 0.0
+        feat_df["steering_v"] = 0.0
+        return feat_df
+
+    era5_dir = base_dir / config["data"]["era5_dir"]
+    wind_ext = ERA5WindShear(era5_dir)
+
+    n = len(feat_df)
+    su_vals = np.full(n, np.nan, dtype=np.float32)
+    sv_vals = np.full(n, np.nan, dtype=np.float32)
+
+    times = pd.to_datetime(feat_df["ISO_TIME"])
+    lats  = feat_df["LAT"].values
+    lons  = feat_df["LON"].values
+    years = times.dt.year.values
+    unique_years = np.unique(years)
+
+    for yi, year in enumerate(unique_years):
+        year_mask = years == year
+        year_idxs = np.where(year_mask)[0]
+
+        print(f"  [Steering] {year} ({yi+1}/{len(unique_years)}): mở file...", flush=True)
+        ds = wind_ext._load(year)
+        if ds is None:
+            print(f"  [Steering] {year}: không có file ERA5 — bỏ qua", flush=True)
+            continue
+
+        try:
+            time_coord = "valid_time" if "valid_time" in ds.coords else "time"
+            era5_times = pd.DatetimeIndex(ds[time_coord].values)
+            era5_lats  = ds["latitude"].values
+            era5_lons  = ds["longitude"].values
+            pl         = ds["pressure_level"].values
+
+            idx_200 = int(np.argmin(np.abs(pl - 200.0)))
+            idx_850 = int(np.argmin(np.abs(pl - 850.0)))
+
+            print(f"    đọc u/v vào RAM...", flush=True)
+            if "time" in ds.dims:
+                u_full = ds["u"].mean(dim="time", skipna=True).values.astype(np.float32)
+                v_full = ds["v"].mean(dim="time", skipna=True).values.astype(np.float32)
+            else:
+                u_full = ds["u"].values.astype(np.float32)  # (n_vt, n_pl, nlat, nlon)
+                v_full = ds["v"].values.astype(np.float32)
+
+            # Steering = mean of 850 and 200 hPa
+            su_full = (u_full[:, idx_200] + u_full[:, idx_850]) / 2.0  # (n_vt, nlat, nlon)
+            sv_full = (v_full[:, idx_200] + v_full[:, idx_850]) / 2.0
+
+            storm_times = times.iloc[year_idxs]
+            nearest_idx = era5_times.get_indexer(storm_times, method="nearest")
+
+            # Lat tăng dần cho slicing nhất quán
+            lat_asc = era5_lats[0] < era5_lats[-1]
+
+            n_done = 0
+            for local_i, global_i in enumerate(year_idxs):
+                ti   = nearest_idx[local_i]
+                slat = lats[global_i]
+                slon = lons[global_i]
+
+                # Box ±radius_deg
+                lat_lo = slat - radius_deg
+                lat_hi = slat + radius_deg
+                lon_lo = slon - radius_deg
+                lon_hi = slon + radius_deg
+
+                lat_mask = (era5_lats >= min(lat_lo, lat_hi)) & (era5_lats <= max(lat_lo, lat_hi))
+                lon_mask = (era5_lons >= lon_lo) & (era5_lons <= lon_hi)
+
+                if lat_mask.sum() == 0 or lon_mask.sum() == 0:
+                    # Điểm nằm ngoài ERA5 domain — fallback về tại điểm
+                    lat_idx = int(np.argmin(np.abs(era5_lats - slat)))
+                    lon_idx = int(np.argmin(np.abs(era5_lons - slon)))
+                    su_vals[global_i] = su_full[ti, lat_idx, lon_idx]
+                    sv_vals[global_i] = sv_full[ti, lat_idx, lon_idx]
+                else:
+                    box_su = su_full[ti][np.ix_(lat_mask, lon_mask)]
+                    box_sv = sv_full[ti][np.ix_(lat_mask, lon_mask)]
+                    su_vals[global_i] = float(np.nanmean(box_su))
+                    sv_vals[global_i] = float(np.nanmean(box_sv))
+                n_done += 1
+
+            print(f"  [Steering] {year}: {n_done:,} rows ✓", flush=True)
+
+        except Exception as e:
+            print(f"  [Steering] {year}: lỗi — {e}", flush=True)
+        finally:
+            if year in wind_ext._cache and wind_ext._cache[year] is not None:
+                wind_ext._cache[year].close()
+                del wind_ext._cache[year]
+
+    wind_ext.close()
+
+    feat_df["steering_u"] = su_vals
+    feat_df["steering_v"] = sv_vals
+
+    # Fill NaN: median cùng tháng → global median → 0
+    month_col = times.dt.month
+    for col in ["steering_u", "steering_v"]:
+        feat_df[col] = feat_df.groupby(month_col)[col].transform(
+            lambda s: s.fillna(s.median())
+        )
+        gmed = feat_df[col].median()
+        feat_df[col] = feat_df[col].fillna(0.0 if np.isnan(gmed) else gmed)
+
+    covered = int((~np.isnan(su_vals)).sum())
+    print(f"[Steering] coverage: {covered:,}/{n:,} rows ({covered/n*100:.1f}%)")
+    return feat_df
+
+
+# =====================================================================
 # Batch extraction cho toàn bộ feature DataFrame
 # =====================================================================
 

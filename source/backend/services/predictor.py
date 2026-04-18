@@ -9,7 +9,9 @@ import numpy as np
 from pathlib import Path
 
 # ONNX model path (relative từ source/backend/)
-_ONNX_PATH = Path(__file__).parent.parent.parent / "model_ai/models/final/model_best_14feat.onnx"
+_STEERING_ONNX = Path(__file__).parent.parent.parent / "model_ai/models/final/model_best_wp_steering.onnx"
+_WP_FULL_ONNX  = Path(__file__).parent.parent.parent / "model_ai/models/final/model_best_wp_full.onnx"
+_ONNX_PATH = _STEERING_ONNX if _STEERING_ONNX.exists() else _WP_FULL_ONNX
 
 _session = None
 _input_name = None
@@ -74,7 +76,7 @@ def rolling_predict(track: list[dict], cutoff_index: int, max_steps: int = 20) -
     list of dict — các điểm dự đoán từ cutoff trở đi
     """
     import pandas as pd
-    from services.preprocessor import prepare_input, unscale_output, _load_scaler
+    from services.preprocessor import prepare_input, decode_output, _load_scaler
 
     _load_session()
     scaler = _load_scaler()
@@ -100,23 +102,37 @@ def rolling_predict(track: list[dict], cutoff_index: int, max_steps: int = 20) -
         if len(current) < 8:
             break
         try:
-            x      = prepare_input(current)                  # (1, 8, 14)
-            pred   = predict(x)                              # (1, 4)
-            coords = unscale_output(pred, scaler)            # [lat24, lon24, lat48, lon48]
+            x      = prepare_input(current)
+            pred   = predict(x)
+            coords = decode_output(pred, x, scaler)
             lat_24h, lon_24h = float(coords[0]), float(coords[1])
         except Exception:
             break
 
+        # Interpolate 4 × 6h points vào `current` để giữ đúng 6h spacing
+        # (model được train với điểm 6h — không append thẳng điểm 24h)
+        lat0 = current[-1]["lat"]
+        lon0 = current[-1]["lon"]
+        for step in range(1, 5):
+            frac = step / 4
+            interp_time = last_time + pd.Timedelta(hours=6 * step)
+            current.append({
+                "lat":      lat0 + frac * (lat_24h - lat0),
+                "lon":      lon0 + frac * (lon_24h - lon0),
+                "iso_time": interp_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "vmax":     last_vmax,
+                "pmin":     last_pmin,
+            })
+
         last_time = last_time + pd.Timedelta(hours=24)
 
-        new_pt = {
+        # Chỉ lưu điểm +24h vào predicted để hiển thị
+        predicted.append({
             "lat":      round(lat_24h, 4),
             "lon":      round(lon_24h, 4),
             "iso_time": last_time.strftime("%Y-%m-%d %H:%M:%S"),
             "vmax":     last_vmax,
             "pmin":     last_pmin,
-        }
-        predicted.append(new_pt)
-        current.append(new_pt)
+        })
 
     return predicted
