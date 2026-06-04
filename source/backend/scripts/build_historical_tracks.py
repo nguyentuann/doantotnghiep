@@ -18,7 +18,10 @@ from pathlib import Path
 
 BASE_DIR   = Path(__file__).parent.parent                        # source/backend/
 MODEL_DIR  = BASE_DIR.parent / "model_ai"
-CLEAN_CSV  = MODEL_DIR / "data/processed/bao_bien_dong_clean.csv"
+# Ưu tiên wp_6h (toàn WP, 6h synoptic) → SCS clean (3h legacy)
+_WP_CSV    = MODEL_DIR / "data/processed/ibtracs_wp_6h.csv"
+_SCS_CSV   = MODEL_DIR / "data/processed/bao_bien_dong_clean.csv"
+CLEAN_CSV  = _WP_CSV if _WP_CSV.exists() else _SCS_CSV
 OUT_FILE   = BASE_DIR / "data/historical_tracks.json"
 
 TEST_YEARS = (2021, 2024)
@@ -77,12 +80,21 @@ def build(df: pd.DataFrame) -> list[dict]:
 
 
 def main():
-    print(f"[B4] Đọc: {CLEAN_CSV}")
+    print(f"[B4] Đọc: {CLEAN_CSV.name}  ({'wp_6h' if 'wp_6h' in CLEAN_CSV.name else 'scs_legacy'})")
     df = pd.read_csv(CLEAN_CSV, low_memory=False)
     df["SEASON"] = pd.to_numeric(df["SEASON"], errors="coerce")
 
+    # Chỉ lấy 6h synoptic (phòng trường hợp file gốc vẫn còn 3h)
+    if "ISO_TIME" in df.columns:
+        df["ISO_TIME"] = pd.to_datetime(df["ISO_TIME"])
+        df = df[df["ISO_TIME"].dt.hour.isin([0, 6, 12, 18])].copy()
+
     test_df = df[df["SEASON"].between(*TEST_YEARS)].copy()
-    print(f"[B4] Test set: {test_df['SID'].nunique()} bão | {len(test_df):,} rows "
+    # Chỉ giữ bão có ít nhất 1 điểm trong SCS (in_scs flag)
+    if "in_scs" in test_df.columns:
+        scs_sids = test_df[test_df["in_scs"].astype(str).isin(["True", "1", "true"])]["SID"].unique()
+        test_df = test_df[test_df["SID"].isin(scs_sids)].copy()
+    print(f"[B4] Test set (SCS storms): {test_df['SID'].nunique()} bão | {len(test_df):,} rows "
           f"({TEST_YEARS[0]}–{TEST_YEARS[1]})")
 
     storms = build(test_df)

@@ -14,6 +14,7 @@ Output: models/checkpoints/best_bilstm_{tag}.pt
 """
 
 import argparse
+import random
 import torch
 import numpy as np
 from pathlib import Path
@@ -27,8 +28,28 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tag", default="14feat",
                         help="Tag phân biệt phiên bản (default: 14feat)")
+    parser.add_argument("--init-from", default=None,
+                        help="Path tới pretrained checkpoint .pt để init weights (transfer learning)")
+    parser.add_argument("--lr-scale", type=float, default=1.0,
+                        help="Scale LR (dùng 0.1-0.3 cho fine-tuning)")
+    parser.add_argument("--max-epochs", type=int, default=None,
+                        help="Override max_epochs từ config")
+    parser.add_argument("--patience", type=int, default=None,
+                        help="Override early stopping patience")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Random seed cho multi-seed ensemble (vd: 42, 123, 2024)")
     args = parser.parse_args()
     tag  = args.tag
+
+    seed_suffix = ""
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(args.seed)
+        seed_suffix = f"_s{args.seed}"
+        print(f"[seed] random seed = {args.seed}")
 
     cfg      = load_config()
     base_dir = Path(__file__).parent.parent.parent
@@ -53,8 +74,10 @@ def main():
     y_val   = data["y_val"]
     print(f"  X_train={X_train.shape}  X_val={X_val.shape}")
 
-    # Tự động detect n_features từ sequences (hỗ trợ 12/14/N features)
+    # Tự động detect n_features, lookback và output_size từ sequences
     cfg["features"]["n_features"] = X_train.shape[2]
+    cfg["model"]["lookback"]      = X_train.shape[1]
+    cfg["model"]["output_size"]   = y_train.shape[1]
 
     scaler = load_scaler(cfg, base_dir, tag=tag)
 
@@ -62,6 +85,15 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model  = build_model("bilstm", cfg)
     print(f"  Params: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
+
+    # --- Init from pretrained (transfer learning) ---
+    if args.init_from:
+        init_path = Path(args.init_from)
+        if not init_path.exists():
+            raise FileNotFoundError(f"--init-from không tồn tại: {init_path}")
+        state_dict = torch.load(str(init_path), map_location="cpu", weights_only=True)
+        model.load_state_dict(state_dict)
+        print(f"  [init] Loaded pretrained weights from: {init_path.name}")
 
     # --- Train ---
     result = run_training(
@@ -75,6 +107,10 @@ def main():
         device=device,
         scaler=scaler,
         tag=tag,
+        lr_scale=args.lr_scale,
+        max_epochs_override=args.max_epochs,
+        patience_override=args.patience,
+        seed_suffix=seed_suffix,
     )
 
     # --- Checkpoint G6 ---

@@ -86,19 +86,28 @@ def load_and_filter_scs(raw_csv: str = None, config: dict = None) -> pd.DataFram
     # --- Loại bỏ record thiếu lat/lon ---
     df = df.dropna(subset=["LAT", "LON"]).copy()
 
-    # --- QUAN TRỌNG: Lấy FULL TRACK của storm có đi qua SCS ---
-    # Bước 1: tìm SID có ít nhất 1 điểm trong SCS box
+    # --- Lấy TOÀN BỘ WP storms (không lọc SCS) ---
+    # Giữ in_scs để dùng cho evaluation riêng bão Biển Đông
     mask_scs = (
         df["LAT"].between(geo["lat_min"], geo["lat_max"]) &
         df["LON"].between(geo["lon_min"], geo["lon_max"])
     )
+    # ERA5 coverage bounds — sequences ngoài vùng này sẽ bị lọc ở G3
+    ERA5_LAT_MIN, ERA5_LAT_MAX = -5.0, 35.0
+    ERA5_LON_MIN, ERA5_LON_MAX = 95.0, 145.0
+    mask_era5 = (
+        df["LAT"].between(ERA5_LAT_MIN, ERA5_LAT_MAX) &
+        df["LON"].between(ERA5_LON_MIN, ERA5_LON_MAX)
+    )
     storm_ids_in_scs = df[mask_scs]["SID"].unique()
     print(f"     Số storm có điểm trong SCS: {len(storm_ids_in_scs)}")
+    print(f"     Tổng storms WP: {df['SID'].nunique()}")
 
-    # Bước 2: lấy toàn bộ track (kể cả đoạn ngoài SCS — cần cho lookback)
-    df_full = df[df["SID"].isin(storm_ids_in_scs)].copy()
-    df_full["in_scs"] = mask_scs.reindex(df_full.index, fill_value=False)
-    print(f"     Rows full track (kể cả ngoài SCS): {len(df_full):,}")
+    # Lấy toàn bộ WP — không lọc SCS
+    df_full = df.copy()
+    df_full["in_scs"]  = mask_scs.reindex(df_full.index, fill_value=False)
+    df_full["in_era5"] = mask_era5.reindex(df_full.index, fill_value=False)
+    print(f"     Rows toàn WP: {len(df_full):,}")
 
     # --- Tạo cột vmax và pmin (ưu tiên WMO → CMA → USA) ---
     def _merge_col(primary, cma, fallback):
@@ -113,15 +122,26 @@ def load_and_filter_scs(raw_csv: str = None, config: dict = None) -> pd.DataFram
     # --- Sắp xếp theo storm và thời gian ---
     df_full = df_full.sort_values(["SID", "ISO_TIME"]).reset_index(drop=True)
 
+    # --- Downsample về synoptic 6h (00/06/12/18 UTC) ---
+    # IBTrACS WP chứa 3h data từ JMA — giữ lại 3h sẽ làm sai dlat/dlon/speed
+    rows_before = len(df_full)
+    df_full = df_full[df_full["ISO_TIME"].dt.hour.isin([0, 6, 12, 18])].copy()
+    df_full = df_full.reset_index(drop=True)
+    print(f"     Sau 6h downsample: {len(df_full):,} rows (bỏ {rows_before - len(df_full):,} records 3h)")
+
     # --- Thống kê cuối ---
-    n_storms = df_full["SID"].nunique()
-    n_scs_rows = df_full["in_scs"].sum()
+    n_storms     = df_full["SID"].nunique()
+    n_scs_storms = df_full[df_full["in_scs"]]["SID"].nunique()
+    n_scs_rows   = df_full["in_scs"].sum()
+    n_era5_rows  = df_full["in_era5"].sum()
     nan_lat = df_full["LAT"].isna().sum()
     nan_lon = df_full["LON"].isna().sum()
 
     print(f"\n[G1] Kết quả:")
-    print(f"     Tổng storms: {n_storms}")
+    print(f"     Tổng storms WP: {n_storms}")
+    print(f"     Storms có điểm trong SCS: {n_scs_storms}")
     print(f"     Rows trong SCS: {n_scs_rows:,}")
+    print(f"     Rows trong ERA5 bounds: {n_era5_rows:,}")
     print(f"     Rows full track: {len(df_full):,}")
     print(f"     NaN lat/lon: {nan_lat}/{nan_lon}")
     print(f"     Seasons: {df_full['SEASON'].min():.0f}–{df_full['SEASON'].max():.0f}")

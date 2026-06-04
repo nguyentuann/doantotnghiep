@@ -10,6 +10,51 @@ html, body, #root {
   font-family: sans-serif;
 }
 
+/* ── Theme variables ── */
+:root,
+[data-theme="dark"] {
+  --bg-primary:    #1a1a2e;
+  --bg-secondary:  #16213e;
+  --bg-elevated:   #0f3460;
+  --bg-hover:      #0f3460;
+  --border:        #0f3460;
+  --border-subtle: rgba(15, 52, 96, 0.5);
+  --text-primary:  #eeeeee;
+  --text-secondary:#aaaaaa;
+  --text-muted:    #888888;
+  --text-disabled: #666666;
+  --accent-red:    #e94560;
+  --accent-blue:   #60a5fa;
+  --map-bg:        #000000;
+  --shadow:        rgba(0, 0, 0, 0.5);
+  --badge-bg:      #0f3460;
+  --badge-text:    #60a5fa;
+  --input-bg:      #16213e;
+  --scrollbar-thumb: #0f3460;
+}
+
+[data-theme="light"] {
+  --bg-primary:    #f8fafc;
+  --bg-secondary:  #f1f5f9;
+  --bg-elevated:   #e2e8f0;
+  --bg-hover:      #e2e8f0;
+  --border:        #cbd5e1;
+  --border-subtle: rgba(203, 213, 225, 0.6);
+  --text-primary:  #1e293b;
+  --text-secondary:#64748b;
+  --text-muted:    #94a3b8;
+  --text-disabled: #94a3b8;
+  --accent-red:    #e11d48;
+  --accent-blue:   #2563eb;
+  --map-bg:        #e8edf2;
+  --shadow:        rgba(0, 0, 0, 0.15);
+  --badge-bg:      #dbeafe;
+  --badge-text:    #1d4ed8;
+  --input-bg:      #ffffff;
+  --scrollbar-thumb: #cbd5e1;
+}
+
+/* ── Layout ── */
 .app-container {
   display: flex;
   height: 100vh;
@@ -19,40 +64,45 @@ html, body, #root {
 .sidebar {
   width: 320px;
   flex-shrink: 0;
-  background: #1a1a2e;
-  color: #eee;
+  background: var(--bg-primary);
+  color: var(--text-primary);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
   z-index: 1000;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
+
+.sidebar::-webkit-scrollbar { width: 4px; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
 
 .sidebar-header {
   padding: 16px;
-  background: #16213e;
-  border-bottom: 1px solid #0f3460;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
 }
 
 .sidebar-header h1 {
   font-size: 1rem;
   font-weight: 600;
-  color: #e94560;
+  color: var(--accent-red);
 }
 
 .sidebar-header p {
   font-size: 0.75rem;
-  color: #aaa;
+  color: var(--text-secondary);
   margin-top: 4px;
 }
 
 .sidebar-section {
   padding: 16px;
-  border-bottom: 1px solid #0f3460;
+  border-bottom: 1px solid var(--border);
 }
 
 .sidebar-section label {
   font-size: 0.75rem;
-  color: #aaa;
+  color: var(--text-secondary);
   display: block;
   margin-bottom: 6px;
   text-transform: uppercase;
@@ -62,9 +112,9 @@ html, body, #root {
 .sidebar-section select {
   width: 100%;
   padding: 8px;
-  background: #16213e;
-  color: #eee;
-  border: 1px solid #0f3460;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 0.875rem;
 }
@@ -72,10 +122,11 @@ html, body, #root {
 .map-container {
   flex: 1;
   position: relative;
-  background: #000;
+  background: var(--map-bg);
   overflow: hidden;
 }
 
+/* ── Storm Info ── */
 .storm-info {
   padding: 16px;
 }
@@ -83,7 +134,7 @@ html, body, #root {
 .storm-info h2 {
   font-size: 1rem;
   margin-bottom: 8px;
-  color: #e94560;
+  color: var(--accent-red);
 }
 
 .info-row {
@@ -91,26 +142,21 @@ html, body, #root {
   justify-content: space-between;
   font-size: 0.8rem;
   padding: 4px 0;
-  border-bottom: 1px solid #0f3460;
+  border-bottom: 1px solid var(--border);
 }
 
-.info-row .label {
-  color: #aaa;
-}
-
-.info-row .value {
-  font-weight: 500;
-}
+.info-row .label { color: var(--text-secondary); }
+.info-row .value { font-weight: 500; }
 
 /* ── Intensity Chart ── */
 .chart-container {
   padding: 12px 16px;
-  border-bottom: 1px solid #0f3460;
+  border-bottom: 1px solid var(--border);
 }
 
 .chart-title {
   font-size: 0.7rem;
-  color: #aaa;
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 8px;
@@ -119,7 +165,7 @@ html, body, #root {
 /* ── Model Metrics Table ── */
 .metrics-container {
   padding: 12px 16px;
-  border-bottom: 1px solid #0f3460;
+  border-bottom: 1px solid var(--border);
 }
 
 .metrics-table {
@@ -130,11 +176,11 @@ html, body, #root {
 }
 
 .metrics-table th {
-  color: #888;
+  color: var(--text-muted);
   font-weight: 500;
   text-align: right;
   padding: 3px 4px;
-  border-bottom: 1px solid #0f3460;
+  border-bottom: 1px solid var(--border);
 }
 
 .metrics-table th:first-child { text-align: left; }
@@ -142,44 +188,42 @@ html, body, #root {
 .metrics-table td {
   padding: 3px 4px;
   text-align: right;
-  border-bottom: 1px solid rgba(15,52,96,0.5);
-  color: #ccc;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
 }
 
 .metrics-table td:first-child { text-align: left; }
 
-.metrics-table .row-best td { color: #fff; background: rgba(249,115,22,0.12); }
-.metrics-table .row-cliper td { color: #666; font-style: italic; }
+.metrics-table .row-best td  { color: var(--text-primary); background: rgba(249,115,22,0.12); }
+.metrics-table .row-cliper td { color: var(--text-disabled); font-style: italic; }
 
 .tag-badge {
   display: inline-block;
   font-size: 0.65rem;
-  background: #0f3460;
-  color: #60a5fa;
+  background: var(--badge-bg);
+  color: var(--badge-text);
   border-radius: 3px;
   padding: 1px 4px;
   margin-right: 4px;
 }
 
-.model-name { color: #ddd; }
-
-.skill-positive { color: #34d399; font-weight: 600; }
-.skill-zero     { color: #666; }
+.model-name       { color: var(--text-primary); }
+.skill-positive   { color: #34d399; font-weight: 600; }
+.skill-zero       { color: var(--text-disabled); }
 
 .metrics-note {
   font-size: 0.65rem;
-  color: #666;
+  color: var(--text-disabled);
   margin-top: 6px;
   font-style: italic;
 }
 
-.legend {
-  padding: 16px;
-}
+/* ── Legend ── */
+.legend { padding: 16px; }
 
 .legend h3 {
   font-size: 0.75rem;
-  color: #aaa;
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 8px;
@@ -200,14 +244,6 @@ html, body, #root {
   flex-shrink: 0;
 }
 
-.legend-dash {
-  width: 24px;
-  height: 0;
-  border-top: 2px dashed #f59e0b;
-  flex-shrink: 0;
-}
-
-/* Đường thực tế — solid gradient */
 .legend-line-solid {
   width: 24px;
   height: 3px;
@@ -216,7 +252,6 @@ html, body, #root {
   flex-shrink: 0;
 }
 
-/* Đường dự đoán — dashed cam */
 .legend-line-dash {
   width: 24px;
   height: 0;
@@ -224,63 +259,62 @@ html, body, #root {
   flex-shrink: 0;
 }
 
-/* Điểm vào SCS — dot trắng */
 .legend-dot-white {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  border: 2px solid #ffffff;
+  border: 2px solid var(--text-primary);
   background: transparent;
   flex-shrink: 0;
   margin: 0 7px;
 }
 
 .legend-divider {
-  border-top: 1px solid #0f3460;
+  border-top: 1px solid var(--border);
   margin: 8px 0;
 }
 
-/* Layer toggle button */
+/* ── Layer toggles ── */
 .layer-toggle {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
   background: transparent;
-  border: 1px solid #1e3a5f;
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 8px;
   cursor: pointer;
-  color: #e2e8f0;
+  color: var(--text-primary);
   font-size: 0.78rem;
   margin-bottom: 6px;
   transition: background 0.15s, border-color 0.15s;
   text-align: left;
 }
+
 .layer-toggle:hover {
-  background: #0f3460;
-  border-color: #2d6a9f;
+  background: var(--bg-hover);
+  border-color: var(--accent-blue);
 }
-.layer-toggle.inactive {
-  opacity: 0.45;
-}
-.layer-toggle span:first-of-type {
-  flex: 1;
-}
+
+.layer-toggle.inactive { opacity: 0.45; }
+.layer-toggle span:first-of-type { flex: 1; }
+
 .toggle-badge {
   font-size: 0.68rem;
   padding: 1px 6px;
   border-radius: 4px;
-  background: #0f3460;
-  color: #94a3b8;
+  background: var(--badge-bg);
+  color: var(--text-secondary);
   flex-shrink: 0;
 }
+
 .layer-toggle.active .toggle-badge {
   background: #1d4ed8;
   color: #bfdbfe;
 }
 
-/* Header layout */
+/* ── Header ── */
 .header-top {
   display: flex;
   align-items: flex-start;
@@ -292,14 +326,15 @@ html, body, #root {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
-/* View toggle 2D/3D */
 .view-toggle {
   padding: 3px 10px;
   background: transparent;
-  color: #60a5fa;
-  border: 1px solid #60a5fa;
+  color: var(--accent-blue);
+  border: 1px solid var(--accent-blue);
   border-radius: 4px;
   font-size: 0.7rem;
   font-weight: 600;
@@ -309,17 +344,15 @@ html, body, #root {
 }
 
 .view-toggle:hover {
-  background: #60a5fa;
+  background: var(--accent-blue);
   color: #fff;
 }
 
-/* Language toggle button */
 .lang-toggle {
-  flex-shrink: 0;
   padding: 3px 10px;
   background: transparent;
-  color: #e94560;
-  border: 1px solid #e94560;
+  color: var(--accent-red);
+  border: 1px solid var(--accent-red);
   border-radius: 4px;
   font-size: 0.7rem;
   font-weight: 600;
@@ -329,55 +362,69 @@ html, body, #root {
 }
 
 .lang-toggle:hover {
-  background: #e94560;
+  background: var(--accent-red);
   color: #fff;
 }
 
-/* Mock warning */
+/* Theme toggle button */
+.theme-toggle {
+  padding: 3px 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  line-height: 1;
+}
+
+.theme-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ── Mock warning ── */
 .mock-warning {
   color: #f59e0b;
   font-size: 0.7rem;
   margin-top: 6px;
 }
 
-/* Leaflet overrides for dark theme */
+/* ── Leaflet dark/light overrides ── */
 .leaflet-container {
-  background: #0a0a1a;
+  background: var(--map-bg);
   font-family: inherit;
 }
 
 .leaflet-control-zoom a {
-  background: #1a1a2e !important;
-  color: #eee !important;
-  border-color: #0f3460 !important;
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border) !important;
 }
 
 .leaflet-control-zoom a:hover {
-  background: #0f3460 !important;
+  background: var(--bg-hover) !important;
 }
 
 .leaflet-control-attribution {
-  background: rgba(26, 26, 46, 0.7) !important;
-  color: #666 !important;
+  background: rgba(0,0,0,0.3) !important;
+  color: var(--text-muted) !important;
   font-size: 0.6rem !important;
 }
 
 .leaflet-control-attribution a {
-  color: #888 !important;
+  color: var(--text-secondary) !important;
 }
 
 .leaflet-tooltip {
-  background: #1a1a2e !important;
-  color: #eee !important;
-  border: 1px solid #0f3460 !important;
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border) !important;
   border-radius: 8px !important;
   padding: 8px 12px !important;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
+  box-shadow: 0 4px 12px var(--shadow) !important;
 }
 
-.leaflet-tooltip-top::before {
-  border-top-color: #0f3460 !important;
-}
-.leaflet-tooltip-bottom::before {
-  border-bottom-color: #0f3460 !important;
-}
+.leaflet-tooltip-top::before    { border-top-color:    var(--border) !important; }
+.leaflet-tooltip-bottom::before { border-bottom-color: var(--border) !important; }

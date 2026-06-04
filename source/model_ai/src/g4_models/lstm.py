@@ -45,6 +45,11 @@ class LSTMModel(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden_size // 2, output_size),
         )
+        # Sprint 1 (no-residual): khởi tạo bias head = tâm SCS [15, 115] lặp lại.
+        # Khi residual=False, model phải output scale tuyệt đối lat/lon. Nếu bias≈0
+        # loss ban đầu ~13000 km → gradient explode. Bias ở tâm SCS giúp loss ban đầu
+        # ~500 km, hội tụ ổn định.
+        _init_head_bias_scs(self.head[-1], output_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -54,4 +59,15 @@ class LSTMModel(nn.Module):
         out, _ = self.lstm(x)    # [B, lookback, hidden]
         last = out[:, -1, :]     # [B, hidden] — bước cuối
         last = self.norm(last)
-        return self.head(last)   # [B, 4]
+        return self.head(last)   # [B, output_size]
+
+
+def _init_head_bias_scs(linear: nn.Linear, output_size: int,
+                        lat_center: float = 15.0, lon_center: float = 115.0):
+    """Khởi tạo bias final Linear layer = [lat, lon] × n_anchors (tâm SCS)."""
+    with torch.no_grad():
+        bias = torch.tensor(
+            [lat_center if i % 2 == 0 else lon_center for i in range(output_size)],
+            dtype=linear.bias.dtype,
+        )
+        linear.bias.copy_(bias)

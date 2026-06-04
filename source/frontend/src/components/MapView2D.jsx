@@ -1,7 +1,14 @@
 import { useEffect, useMemo } from 'react'
 import { MapContainer, TileLayer, Polyline, CircleMarker, Tooltip, useMap } from 'react-leaflet'
 import { useLocale } from '../i18n/LocaleContext'
+import { useTheme } from '../theme/ThemeContext'
+import { interpolatePredicted6h } from '../utils/trackUtils'
 import 'leaflet/dist/leaflet.css'
+
+const TILES = {
+  dark:  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+}
 
 const SCS_CENTER = [15, 114]
 const SCS_ZOOM = 5
@@ -91,7 +98,8 @@ function ActualTrackLayer({ track }) {
   )
 }
 
-/** Predicted track: dashed orange polyline + markers with tooltips */
+/** Predicted track: dashed orange polyline + markers with tooltips.
+ *  predictedTrack đã được interpolate 6h, isAIPoint=true tại mỗi 24h thực. */
 function PredictedTrackLayer({ predictedTrack, cutoffPoint }) {
   if (!predictedTrack || predictedTrack.length < 1) return null
 
@@ -101,24 +109,35 @@ function PredictedTrackLayer({ predictedTrack, cutoffPoint }) {
 
   return (
     <>
-      <Polyline positions={positions} color="#f59e0b" weight={3} dashArray="10 6" opacity={0.9} />
-      {pts.slice(1).map((pt, i) => (
-        <CircleMarker
-          key={`pred-${i}`}
-          center={[pt.lat, pt.lon]}
-          radius={5}
-          pathOptions={{ fillColor: '#f59e0b', color: '#fff', weight: 1.5, fillOpacity: 0.8 }}
-        >
-          <Tooltip>
-            <div style={{ fontSize: 12, lineHeight: 1.7 }}>
-              <b style={{ color: '#f59e0b' }}>🔮 +{(i + 1) * 24}h dự đoán</b><br />
-              {pt.time ?? pt.iso_time ?? ''}<br />
-              {pt.lat.toFixed(2)}°N &nbsp; {pt.lon.toFixed(2)}°E<br />
-              {pt.direction != null && <>↗ {compassDir(pt.direction)} ({Math.round(pt.direction)}°)</>}
-            </div>
-          </Tooltip>
-        </CircleMarker>
-      ))}
+      <Polyline positions={positions} color="#f59e0b" weight={2.5} dashArray="8 5" opacity={0.9} />
+      {pts.slice(1).map((pt, i) => {
+        const isAI  = pt.isAIPoint === true
+        const aiIdx = Math.floor(i / 4) + 1
+        return (
+          <CircleMarker
+            key={`pred-${i}`}
+            center={[pt.lat, pt.lon]}
+            radius={isAI ? 6 : 3}
+            pathOptions={{
+              fillColor: '#f59e0b',
+              color: isAI ? '#fff' : '#f59e0b',
+              weight: isAI ? 2 : 0.5,
+              fillOpacity: isAI ? 0.95 : 0.5,
+            }}
+          >
+            {isAI && (
+              <Tooltip>
+                <div style={{ fontSize: 12, lineHeight: 1.7 }}>
+                  <b style={{ color: '#f59e0b' }}>🔮 +{aiIdx * 24}h AI</b><br />
+                  {pt.iso_time ?? ''}<br />
+                  {pt.lat.toFixed(2)}°N &nbsp; {pt.lon.toFixed(2)}°E<br />
+                  {pt.direction != null && <>↗ {compassDir(pt.direction)} ({Math.round(pt.direction)}°)</>}
+                </div>
+              </Tooltip>
+            )}
+          </CircleMarker>
+        )
+      })}
     </>
   )
 }
@@ -152,20 +171,33 @@ function sliceAtLandfall(points) {
   return idx === -1 ? points : points.slice(0, idx + 1)  // +1 để hiện điểm đổ bộ
 }
 
-export default function MapView2D({ selectedStorm, showActual = true, showPredicted = true }) {
+export default function MapView2D({ selectedStorm, showActual = true, showPredicted = true, animStep = null }) {
+  const { theme } = useTheme()
   const cutoff        = selectedStorm?.cutoff_index ?? selectedStorm?.track?.length ?? 0
   const cutoffPoint   = selectedStorm?.track?.[cutoff - 1] ?? selectedStorm?.track?.at(-1) ?? null
   const scsEntryPoint = selectedStorm?.track?.[cutoff] ?? null
 
-  // Actual track: toàn bộ (kể cả SCS) để so sánh với dự đoán
-  const actualTrack = selectedStorm?.track ?? []
-
-  // Predicted track: từ cutoff, cắt tại bờ biển Việt Nam
+  const fullActual   = selectedStorm?.track ?? []
   const rawPredicted = selectedStorm?.predicted_track ?? []
-  const predictedTrack = useMemo(
-    () => sliceAtLandfall(rawPredicted),
-    [rawPredicted]
-  )
+
+  // Interpolate predicted 24h → 6h, cắt tại bờ VN
+  const full6hPredicted = useMemo(() => {
+    const interp = interpolatePredicted6h(sliceAtLandfall(rawPredicted), cutoffPoint)
+    return interp
+  }, [rawPredicted, cutoffPoint])
+
+  // Filter theo animStep
+  const actualTrack = useMemo(() => {
+    if (animStep === null) return fullActual
+    return fullActual.slice(0, animStep + 1)
+  }, [fullActual, animStep])
+
+  const predictedTrack = useMemo(() => {
+    if (animStep === null) return full6hPredicted
+    const predStart = animStep - fullActual.length + 1
+    if (predStart <= 0) return []
+    return full6hPredicted.slice(0, predStart)
+  }, [full6hPredicted, fullActual.length, animStep])
 
   return (
     <MapContainer
@@ -175,7 +207,7 @@ export default function MapView2D({ selectedStorm, showActual = true, showPredic
       zoomControl={true}
     >
       <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        url={TILES[theme]}
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
       />
 

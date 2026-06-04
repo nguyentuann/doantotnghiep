@@ -28,10 +28,10 @@ from pathlib import Path
 
 BASE_DIR   = Path(__file__).parent.parent          # source/model_ai/
 ERA5_DIR   = BASE_DIR / "data/era5"
-PRES_DIR   = ERA5_DIR / "pressure"
+PRES_DIR   = ERA5_DIR / "pressure_4lev"   # Sprint 1: 4 levels (200/500/700/850) + geopotential
 SST_DIR    = ERA5_DIR / "sst"
 
-YEAR_START = 1986
+YEAR_START = 1979
 YEAR_END   = 2024
 
 # Vùng bao phủ Biển Đông + vùng đệm (North, West, South, East)
@@ -40,13 +40,14 @@ AREA = [35, 95, -5, 145]
 # Các giờ UTC khớp với IBTrACS (6h resolution)
 TIMES = ["00:00", "06:00", "12:00", "18:00"]
 
-# Chỉ 2 levels cần cho wind shear (200–850 hPa)
-PRESSURE_LEVELS = ["200", "850"]
+# Sprint 1: 4 pressure levels — wind shear (200/850) + steering flow (500/700)
+PRESSURE_LEVELS = ["200", "500", "700", "850"]
 
-# Chỉ u/v wind — đủ để tính wind shear
+# u/v wind + geopotential (z500 → ridge/trough tín hiệu recurve)
 PRESSURE_VARS = [
-    "u_component_of_wind",   # U-wind → wind shear (200–850 hPa)
-    "v_component_of_wind",   # V-wind → wind shear
+    "u_component_of_wind",   # U-wind → wind shear + steering flow
+    "v_component_of_wind",   # V-wind → wind shear + steering flow
+    "geopotential",          # z500 → subtropical high position, recurve signal
 ]
 
 # Biến tải từ single levels

@@ -1,13 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import GlobeMap from './components/GlobeMap'
 import MapView2D from './components/MapView2D'
 import StormInfoPanel from './components/StormInfoPanel'
 import IntensityChart from './components/IntensityChart'
 import ModelMetricsTable from './components/ModelMetricsTable'
 import StormSelector from './components/StormSelector'
+import TrackAnimator from './components/TrackAnimator'
 import { fetchStorms, fetchStormDetail } from './api/storms'
 import { MOCK_STORMS } from './api/mockData'
 import { useLocale } from './i18n/LocaleContext'
+import { useTheme } from './theme/ThemeContext'
 
 const INTENSITY_KEYS = ['td', 'ts', 'c1', 'c2', 'c3', 'c4', 'c5']
 const INTENSITY_COLORS = ['#94a3b8', '#60a5fa', '#34d399', '#fbbf24', '#f97316', '#ef4444', '#a855f7']
@@ -22,6 +24,48 @@ export default function App() {
   const [showPredicted, setShowPredicted] = useState(true)
   const [viewMode, setViewMode]           = useState('3d')  // '3d' | '2d'
   const { locale, toggle, t }             = useLocale()
+  const { theme, toggle: toggleTheme }    = useTheme()
+
+  // Animation state
+  const [animStep,  setAnimStep]  = useState(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [animSpeed, setAnimSpeed] = useState(600)
+  const intervalRef = useRef(null)
+
+  // Reset animation khi đổi bão
+  useEffect(() => {
+    setAnimStep(null)
+    setIsPlaying(false)
+  }, [selectedStorm])
+
+  // Animation loop — predicted đã interpolate 6h nên x4 số điểm
+  useEffect(() => {
+    clearInterval(intervalRef.current)
+    if (!isPlaying || !selectedStorm) return
+    const total = (selectedStorm.track?.length ?? 0) + (selectedStorm.predicted_track?.length ?? 0) * 4
+    intervalRef.current = setInterval(() => {
+      setAnimStep(prev => {
+        const next = (prev ?? -1) + 1
+        if (next >= total) { setIsPlaying(false); return total - 1 }
+        return next
+      })
+    }, animSpeed)
+    return () => clearInterval(intervalRef.current)
+  }, [isPlaying, animSpeed, selectedStorm])
+
+  function handlePlay() {
+    if (!selectedStorm) return
+    const total = (selectedStorm.track?.length ?? 0) + (selectedStorm.predicted_track?.length ?? 0) * 4
+    if (!isPlaying && animStep !== null && animStep >= total - 1) {
+      setAnimStep(0)
+    }
+    setIsPlaying(p => !p)
+  }
+
+  function handleReset() {
+    setIsPlaying(false)
+    setAnimStep(null)
+  }
 
   useEffect(() => {
     fetchStorms()
@@ -62,6 +106,13 @@ export default function App() {
                 title={t.viewToggleTitle}
               >
                 {viewMode === '3d' ? '2D' : '3D'}
+              </button>
+              <button
+                className="theme-toggle"
+                onClick={toggleTheme}
+                title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              >
+                {theme === 'dark' ? '☀️' : '🌙'}
               </button>
               <button className="lang-toggle" onClick={toggle} title="Switch language">
                 {locale === 'vi' ? 'EN' : 'VI'}
@@ -137,12 +188,27 @@ export default function App() {
             selectedStorm={selectedStorm}
             showActual={showActual}
             showPredicted={showPredicted}
+            animStep={animStep}
           />
         ) : (
           <MapView2D
             selectedStorm={selectedStorm}
             showActual={showActual}
             showPredicted={showPredicted}
+            animStep={animStep}
+          />
+        )}
+
+        {selectedStorm && (
+          <TrackAnimator
+            storm={selectedStorm}
+            animStep={animStep}
+            isPlaying={isPlaying}
+            speed={animSpeed}
+            onStep={s => { setIsPlaying(false); setAnimStep(s) }}
+            onPlay={handlePlay}
+            onReset={handleReset}
+            onSpeed={setAnimSpeed}
           />
         )}
       </main>

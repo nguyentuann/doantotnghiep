@@ -9,7 +9,7 @@ geography:
   lat_max: 22.0
   lon_min: 102.0
   lon_max: 120.0
-  year_start: 1960
+  year_start: 1945
   year_end: 2024
 
 # --- Đường dẫn dữ liệu ---
@@ -18,7 +18,7 @@ data:
   clean_file:   'data/processed/bao_bien_dong_1960.csv'
   feature_file: 'data/features/feature_matrix.csv'
   sst_dir:      'data/raw/sst/'                  # (legacy) NOAA OI SST .nc theo từng năm
-  era5_dir:     'data/era5/'                     # ERA5 wind shear (u/v 200+850 hPa)
+  era5_dir:     'data/era5/pressure_4lev/'        # Sprint 1: 4 levels (200/500/700/850) + geopotential
   noaa_sst:     'data/noaa_sst/sst.mnmean.nc'    # NOAA OISST v2 monthly mean 1°
   time_step_hours: 6
 
@@ -39,11 +39,33 @@ features:
     - direction
     - vmax
     - pmin
+    - sst_actual
     - month_sin
     - month_cos
     - storm_age_h
     - dist2land
-  n_features: 12             # 12feat_clean: bỏ sst_actual + wind_shear (noise theo permutation importance)
+    - wind_shear
+    - u500          # U-wind 500 hPa tại tâm bão (steering flow)
+    - v500          # V-wind 500 hPa tại tâm bão
+    - u700          # U-wind 700 hPa tại tâm bão (steering flow)
+    - v700          # V-wind 700 hPa tại tâm bão
+    - z500          # Geopotential height 500 hPa (hPa ridge/trough)
+    - u200          # U-wind 200 hPa (upper outflow, recurvature signal)
+    - v200          # V-wind 200 hPa
+    - u850          # U-wind 850 hPa (low-level steering)
+    - v850          # V-wind 850 hPa
+    - vort500       # Relative vorticity 500 hPa (×10⁵ s⁻¹) — environmental rotation
+    - vort850       # Relative vorticity 850 hPa — low-level circulation
+    - beta_lat_drift  # Beta drift physics prior (Holland 1983) — poleward
+    - beta_lon_drift  # Beta drift physics prior (Holland 1983) — westward
+    - asteer_u        # Annulus 3-7° deep-layer-mean steering U (Chan & Gray 1982)
+    - asteer_v        # Annulus 3-7° deep-layer-mean steering V — bỏ vortex bão
+    - asteer_u850     # Annulus 3-7° tại 850 hPa — low-level steering cho bão yếu
+    - asteer_v850     # Annulus 3-7° tại 850 hPa
+    # - asteer_u200   # ❌ scs_v13: redundant với u200/v200 box-avg (val MAE +19 km)
+    # - asteer_v200
+    - enso_oni        # ✅ scs_v14: Oceanic Niño Index — ENSO modulates WPSH + TC tracks
+  n_features: 32             # 31 (v12) + enso_oni (32) — asteer_u200/v200 removed (failed)
   wind_primary:   'WMO_WIND' # Ưu tiên 1: gió 10 phút (JMA/WMO chuẩn)
   wind_cma:       'CMA_WIND' # Ưu tiên 2: CMA — chính xác nhất cho SCS
   wind_fallback:  'USA_WIND' # Fallback:  gió 1 phút (JTWC)
@@ -55,25 +77,35 @@ features:
 # --- Model (G3 → G5) ---
 model:
   lookback: 8        # 8 bước × 6h = 48h nhìn về quá khứ
-  horizon: 8         # 8 bước × 6h = 48h dự đoán tới (anchor tại bước 4 và 8)
-  anchor_steps: [4, 8]  # Bước 4=24h, bước 8=48h — model trực tiếp dự đoán 2 điểm này
+  horizon: 8         # 8 bước × 6h = 48h dự đoán tới
+  anchor_steps: [1, 2, 3, 4, 5, 6, 7, 8]  # multi-horizon, 8 bước 6h→48h
+  output_size: 16    # 8 bước × 2 coords (lat, lon) = 16 giá trị đầu ra
   hidden_size: 128
   num_layers: 2
-  dropout: 0.3
+  nhead: 4           # 128/4 = 32 dims/head — chuẩn cho Transformer
+  dropout: 0.2
+  noise_std: 0.05    # Gaussian noise augmentation (scaled space)
   batch_size: 32
   lr: 0.0005
-  max_epochs: 200
-  patience: 30       # Early stopping
-  residual: true     # Model học residual từ CLIPER → pred = CLIPER + model_output
+  max_epochs: 300
+  patience: 40       # Early stopping
+  residual: true     # LSTM/BiLSTM cần CLIPER prior để hội tụ tốt.
+  # --- SWA (Stochastic Weight Averaging — Izmailov et al. 2018) ---
+  swa: true               # Bật SWA: average weights N epoch cuối cho generalization tốt hơn
+  swa_start_frac: 0.75    # Bắt đầu SWA sau 75% max_epochs (vd 225 nếu max=300)
+  swa_lr_scale: 0.5       # SWA learning rate = base_lr × scale
 
 # --- Loss function ---
 loss:
-  weight_24h: 0.6    # Ưu tiên 24h (quan trọng hơn cho cảnh báo thiên tai)
-  weight_48h: 0.4
+  weight_24h: 0.50   # Extra weight cho step 4 (24h) — primary target
+  weight_48h: 0.20   # Extra weight cho step 8 (48h)
+  # Các step còn lại chia đều: (1 - 0.50 - 0.20) / 6 = 0.05 mỗi step
+  lambda_smooth: 1.0 # Smoothness penalty (L2 of 2nd derivative, degrees²)
+  lambda_dir: 0.1    # Directional loss (1 - cos(bearing mismatch))
 
 # --- Train/Val/Test split (theo NĂM — không random) ---
 split:
-  train: [1960, 2016]
+  train: [1979, 2016]
   val:   [2017, 2020]
   test:  [2021, 2024]
 
@@ -88,7 +120,7 @@ output:
 
 # --- Checkpoint conditions ---
 checkpoints:
-  g1_min_storms: 300
+  g1_min_storms: 1000         # WP full: ~1800+ storms vs SCS 561
   g3_min_sequences: 5000
   g5_lstm_max_mae_km: 200
   g6_min_improvement_pct: 10

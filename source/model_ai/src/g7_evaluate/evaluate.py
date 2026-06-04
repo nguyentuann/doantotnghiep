@@ -51,19 +51,35 @@ def haversine_km(lat1: np.ndarray, lon1: np.ndarray,
 
 # ─── Metrics ──────────────────────────────────────────────────────────────────
 
+def _get_24h_48h_indices(n_outputs: int) -> tuple[int, int]:
+    """
+    Trả về (flat_idx_24h, flat_idx_48h) trong mảng pred/true.
+    - Legacy (n_outputs=4):  24h=0, 48h=2
+    - Multi-horizon (n_outputs=16): step4=24h → idx 6, step8=48h → idx 14
+    """
+    if n_outputs == 4:
+        return 0, 2
+    # Multi-horizon: n_steps = n_outputs // 2, step 4 (24h) = index 3 → flat 6,7
+    # step 8 (48h) = index 7 → flat 14,15
+    return 6, 14
+
+
 def compute_metrics(pred: np.ndarray, true: np.ndarray) -> dict:
     """
-    pred, true: (N, 4) = [lat_24h, lon_24h, lat_48h, lon_48h] in degrees.
+    pred, true: (N, n_outputs) — hỗ trợ cả legacy (4) và multi-horizon (16).
     Returns dict với mae_24h, rmse_24h, mae_48h, rmse_48h.
     """
-    err_24 = haversine_km(pred[:, 0], pred[:, 1], true[:, 0], true[:, 1])
-    err_48 = haversine_km(pred[:, 2], pred[:, 3], true[:, 2], true[:, 3])
+    idx_24, idx_48 = _get_24h_48h_indices(pred.shape[1])
+    err_24 = haversine_km(pred[:, idx_24], pred[:, idx_24+1],
+                          true[:, idx_24], true[:, idx_24+1])
+    err_48 = haversine_km(pred[:, idx_48], pred[:, idx_48+1],
+                          true[:, idx_48], true[:, idx_48+1])
     return {
         "mae_24h":  float(np.mean(err_24)),
         "rmse_24h": float(np.sqrt(np.mean(err_24 ** 2))),
         "mae_48h":  float(np.mean(err_48)),
         "rmse_48h": float(np.sqrt(np.mean(err_48 ** 2))),
-        "err_24":   err_24,   # giữ lại để vẽ histogram
+        "err_24":   err_24,
         "err_48":   err_48,
     }
 
@@ -121,6 +137,9 @@ def _detect_hidden_size(state_dict: dict, model_name: str) -> int:
     elif model_name == "bilstm":
         w = state_dict.get("bilstm.weight_ih_l0")
         return int(w.shape[0] / 4) if w is not None else 128
+    elif model_name == "bigru":
+        w = state_dict.get("bigru.weight_ih_l0")
+        return int(w.shape[0] / 3) if w is not None else 128  # GRU: 3 gates
     elif model_name == "transformer":
         w = state_dict.get("input_proj.weight")
         return int(w.shape[0]) if w is not None else 128
@@ -134,6 +153,9 @@ def _detect_n_features(state_dict: dict, model_name: str) -> int:
         return int(w.shape[1]) if w is not None else 14
     elif model_name == "bilstm":
         w = state_dict.get("bilstm.weight_ih_l0")
+        return int(w.shape[1]) if w is not None else 14
+    elif model_name == "bigru":
+        w = state_dict.get("bigru.weight_ih_l0")
         return int(w.shape[1]) if w is not None else 14
     elif model_name == "transformer":
         w = state_dict.get("input_proj.weight")
@@ -149,9 +171,18 @@ def _detect_lookback(state_dict: dict, model_name: str) -> int:
     return None
 
 
+def _detect_output_size(state_dict: dict) -> int:
+    """Detect output_size từ head layer cuối của checkpoint."""
+    # Tìm Linear layer cuối trong head (bias shape = (output_size,))
+    for key in reversed(list(state_dict.keys())):
+        if "head" in key and "bias" in key:
+            return int(state_dict[key].shape[0])
+    return 4  # legacy fallback
+
+
 def _detect_num_layers(state_dict: dict, model_name: str) -> int:
     """Detect num_layers bằng cách đếm layer keys."""
-    prefix = {"lstm": "lstm", "bilstm": "bilstm"}.get(model_name)
+    prefix = {"lstm": "lstm", "bilstm": "bilstm", "bigru": "bigru"}.get(model_name)
     if prefix is None:
         # Transformer: đếm encoder layers
         layer_idx = 0
@@ -162,6 +193,27 @@ def _detect_num_layers(state_dict: dict, model_name: str) -> int:
     while f"{prefix}.weight_ih_l{layer}" in state_dict:
         layer += 1
     return max(layer, 1)
+
+
+def _build_model_from_state(state_dict: dict, model_name: str, cfg: dict):
+    """Build model + load weights, tự detect kiến trúc từ state_dict."""
+    patched_cfg = {**cfg, "model": {**cfg["model"]},
+                   "features": {**cfg["features"]}}
+    patched_cfg["model"]["hidden_size"] = _detect_hidden_size(state_dict, model_name)
+    patched_cfg["model"]["num_layers"]  = _detect_num_layers(state_dict, model_name)
+    patched_cfg["model"]["output_size"] = _detect_output_size(state_dict)
+
+    n_feat = _detect_n_features(state_dict, model_name)
+    patched_cfg["features"]["n_features"] = n_feat
+
+    lookback = _detect_lookback(state_dict, model_name)
+    if lookback is not None:
+        patched_cfg["model"]["lookback"] = lookback
+
+    model = build_model(model_name, patched_cfg)
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model, patched_cfg
 
 
 def load_model_checkpoint(model_name: str, cfg: dict, tag: str = "14feat"):
@@ -178,9 +230,13 @@ def load_model_checkpoint(model_name: str, cfg: dict, tag: str = "14feat"):
         ckpt_dir  / f"best_{model_name}{suffix}.pt",
         final_dir / f"{model_name}_baseline{suffix}.pt",
         final_dir / f"{model_name}_best{suffix}.pt",
-        ckpt_dir  / f"best_{model_name}.pt",
-        final_dir / f"{model_name}.pt",
     ]
+    # Chỉ fallback về legacy (non-tagged) khi chạy với tag rỗng
+    if not tag:
+        candidates.extend([
+            ckpt_dir  / f"best_{model_name}.pt",
+            final_dir / f"{model_name}.pt",
+        ])
     found_path = next((p for p in candidates if p.exists()), None)
     if found_path is None:
         return None, None
@@ -193,6 +249,7 @@ def load_model_checkpoint(model_name: str, cfg: dict, tag: str = "14feat"):
                        "features": {**cfg["features"]}}
         patched_cfg["model"]["hidden_size"] = _detect_hidden_size(state_dict, model_name)
         patched_cfg["model"]["num_layers"]  = _detect_num_layers(state_dict, model_name)
+        patched_cfg["model"]["output_size"] = _detect_output_size(state_dict)
 
         n_feat = _detect_n_features(state_dict, model_name)
         patched_cfg["features"]["n_features"] = n_feat
@@ -212,6 +269,31 @@ def load_model_checkpoint(model_name: str, cfg: dict, tag: str = "14feat"):
     except Exception as e:
         print(f"  [warn] Không load được {model_name}: {e}")
         return None, None
+
+
+def load_seed_checkpoints(model_name: str, cfg: dict, tag: str = ""):
+    """
+    Trả về list (model, ckpt_path) cho mỗi seed checkpoint:
+      best_{model_name}_{tag}_s{N}.pt
+    Trả về list rỗng nếu không tìm thấy seed nào.
+    """
+    suffix    = f"_{tag}" if tag else ""
+    ckpt_dir  = BASE_DIR / cfg["output"]["checkpoint_dir"]
+    pattern   = f"best_{model_name}{suffix}_s*.pt"
+    seed_files = sorted(ckpt_dir.glob(pattern))
+    if not seed_files:
+        return []
+
+    models = []
+    for fp in seed_files:
+        try:
+            sd = torch.load(str(fp), map_location="cpu", weights_only=True)
+            m, _ = _build_model_from_state(sd, model_name, cfg)
+            models.append((m, fp))
+            print(f"  [seed] {model_name.upper()} <- {fp.name}")
+        except Exception as e:
+            print(f"  [warn] Bỏ qua {fp.name}: {e}")
+    return models
 
 
 def model_predict(model, X_test: np.ndarray,
@@ -342,8 +424,9 @@ def plot_scatter(best_pred: np.ndarray, y_test: np.ndarray,
     """Scatter predicted vs actual LAT 24h và 48h."""
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     color = COLORS.get(best_name, "#8b5cf6")
+    idx_24, idx_48 = _get_24h_48h_indices(best_pred.shape[1])
 
-    for ax, h_idx, label in [(axes[0], 0, "24h"), (axes[1], 2, "48h")]:
+    for ax, h_idx, label in [(axes[0], idx_24, "24h"), (axes[1], idx_48, "48h")]:
         ax.scatter(y_test[:, h_idx], best_pred[:, h_idx],
                    alpha=0.35, s=8, color=color, label=best_name.upper())
         lo = min(y_test[:, h_idx].min(), best_pred[:, h_idx].min()) - 1
@@ -388,14 +471,15 @@ def plot_mae_by_type(all_preds: dict, y_test: np.ndarray,
 
     for i, (name, pred) in enumerate(all_preds.items()):
         color = COLORS.get(name, "#8b5cf6")
+        idx_24, _ = _get_24h_48h_indices(pred.shape[1])
         maes_by_type = []
         for t in types:
             mask = traj_labels == t
             if mask.sum() == 0:
                 maes_by_type.append(0.0)
             else:
-                err = haversine_km(pred[mask, 0], pred[mask, 1],
-                                   y_test[mask, 0], y_test[mask, 1])
+                err = haversine_km(pred[mask, idx_24], pred[mask, idx_24+1],
+                                   y_test[mask, idx_24], y_test[mask, idx_24+1])
                 maes_by_type.append(float(np.mean(err)))
         offset = (i - n_models / 2 + 0.5) * w
         ax.bar(x + offset, maes_by_type, w, label=name.upper(),
@@ -453,8 +537,9 @@ def plot_folium_tracks(X_test: np.ndarray, y_test: np.ndarray,
         lons_hist = track_orig[:, 1] * 18.0 + 102.0
 
         # Thực tế
-        true_lat24, true_lon24 = y_test[idx, 0], y_test[idx, 1]
-        true_lat48, true_lon48 = y_test[idx, 2], y_test[idx, 3]
+        _i24, _i48 = _get_24h_48h_indices(y_test.shape[1])
+        true_lat24, true_lon24 = y_test[idx, _i24],   y_test[idx, _i24+1]
+        true_lat48, true_lon48 = y_test[idx, _i48],   y_test[idx, _i48+1]
 
         center = [float(lats_hist[-1]), float(lons_hist[-1])]
         m = folium.Map(location=center, zoom_start=5, tiles="OpenStreetMap")
@@ -479,8 +564,9 @@ def plot_folium_tracks(X_test: np.ndarray, y_test: np.ndarray,
         # Model predictions
         for name, pred in all_preds.items():
             clr = COLORS.get(name, "#8b5cf6")
-            lat24p, lon24p = pred[idx, 0], pred[idx, 1]
-            lat48p, lon48p = pred[idx, 2], pred[idx, 3]
+            _i24, _i48 = _get_24h_48h_indices(pred.shape[1])
+            lat24p, lon24p = pred[idx, _i24],   pred[idx, _i24+1]
+            lat48p, lon48p = pred[idx, _i48],   pred[idx, _i48+1]
             folium.PolyLine(
                 [coords_hist[-1], [lat24p, lon24p], [lat48p, lon48p]],
                 color=clr, weight=2, dash_array="8",
@@ -502,12 +588,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tag", default="14feat",
                         help="Tag pipeline (vd: '14feat', '') — mặc định '14feat'")
+    parser.add_argument("--scs-only", action=argparse.BooleanOptionalAction, default=True,
+                        help="Chỉ đánh giá trên sequences có tâm bão trong SCS box (default: True). "
+                             "Dùng --no-scs-only để đánh giá trên toàn WP.")
     args = parser.parse_args()
     tag    = args.tag
     suffix = f"_{tag}" if tag else ""
 
     print("\n" + "=" * 60)
     print(f"  G7 — Evaluate: CLIPER baseline + Model metrics  [tag='{tag}']")
+    print(f"  Test domain: {'SCS-only' if args.scs_only else 'WP-full'}")
     print("=" * 60)
 
     cfg = load_config()
@@ -516,18 +606,42 @@ def main():
     seq_path    = BASE_DIR / "data" / "features" / f"sequences{suffix}.npz"
     scaler_path = BASE_DIR / cfg["output"]["scaler_path"].replace(".pkl", f"{suffix}.pkl")
     log_path    = BASE_DIR / cfg["output"]["results_log"]
-    # Lưu figures vào subfolder riêng theo tag — tránh ghi đè giữa các phiên bản
-    fig_dir     = BASE_DIR / cfg["output"]["figures_dir"] / (tag if tag else "legacy")
+    # Lưu figures vào subfolder riêng theo tag (+ _scs nếu chỉ SCS) — tránh ghi đè
+    sub_dir     = (tag if tag else "legacy") + ("_scs" if args.scs_only else "")
+    fig_dir     = BASE_DIR / cfg["output"]["figures_dir"] / sub_dir
     ckpt_pct    = cfg["checkpoints"]["g7_min_skill_score_pct"]
 
     # --- Load data ---
     print("\n[1] Load dữ liệu test...")
     if not seq_path.exists():
         raise FileNotFoundError(f"Không tìm thấy sequences.npz: {seq_path}")
-    data = np.load(str(seq_path))
+    # allow_pickle=True để đọc được object arrays từ file npz cũ (SID/init_time)
+    data = np.load(str(seq_path), allow_pickle=True)
     X_test = data["X_test"].astype(np.float32)
     y_test = data["y_test"].astype(np.float32)
+
+    # Load sid_test + init_time_test nếu có (cho per-storm breakdown)
+    sid_test       = data["sid_test"]       if "sid_test"       in data.files else None
+    init_time_test = data["init_time_test"] if "init_time_test" in data.files else None
+
+    # Filter SCS-only nếu in_scs_test có sẵn trong .npz
+    if args.scs_only:
+        if "in_scs_test" in data.files:
+            mask = data["in_scs_test"].astype(bool)
+            n_total = len(mask)
+            n_scs   = int(mask.sum())
+            X_test  = X_test[mask]
+            y_test  = y_test[mask]
+            if sid_test       is not None: sid_test       = sid_test[mask]
+            if init_time_test is not None: init_time_test = init_time_test[mask]
+            print(f"  SCS filter: giữ {n_scs:,}/{n_total:,} sequences ({n_scs/max(n_total,1)*100:.1f}%)")
+        else:
+            print(f"  [warn] sequences.npz không có 'in_scs_test' — chạy lại G3 để có flag. "
+                  f"Tạm thời đánh giá trên toàn test set.")
+
     print(f"  X_test: {X_test.shape}, y_test: {y_test.shape}")
+    if sid_test is not None:
+        print(f"  Per-storm: {len(np.unique(sid_test))} unique storms in test set")
 
     if not scaler_path.exists():
         raise FileNotFoundError(f"Không tìm thấy scaler.pkl: {scaler_path}")
@@ -536,8 +650,9 @@ def main():
     print(f"  Scaler: {scaler_path}")
 
     # --- CLIPER baseline ---
+    anchor_steps = cfg["model"].get("anchor_steps", [4, 8])
     print("\n[2] CLIPER baseline...")
-    cliper_pred = cliper_predict(X_test, scaler)
+    cliper_pred = cliper_predict(X_test, scaler, anchor_steps=anchor_steps)
     cliper_metrics = compute_metrics(cliper_pred, y_test)
     print(f"  CLIPER MAE 24h = {cliper_metrics['mae_24h']:.1f} km")
     print(f"  CLIPER MAE 48h = {cliper_metrics['mae_48h']:.1f} km")
@@ -558,23 +673,38 @@ def main():
     if residual:
         print(f"  [residual mode] Model dự đoán delta từ CLIPER")
 
-    model_names = ["lstm", "bilstm", "transformer"]
+    model_names = ["lstm", "bilstm", "bigru", "transformer"]
     all_preds   = {"cliper": cliper_pred}
     all_metrics = {"cliper": cliper_metrics}
     skill_scores_dict = {}
 
     for mname in model_names:
-        model, ckpt_path = load_model_checkpoint(mname, cfg, tag=tag)
-        if model is None:
-            print(f"  [skip] {mname.upper()} — không tìm thấy checkpoint")
-            continue
+        # --- Multi-seed: tìm tất cả best_{mname}_{tag}_s*.pt ---
+        seed_models = load_seed_checkpoints(mname, cfg, tag=tag)
+        if seed_models:
+            # Mỗi seed → 1 prediction → trung bình
+            seed_preds = []
+            for sm, sfp in seed_models:
+                p_s = model_predict(sm, X_test, cliper_pred=cliper_pred, residual=residual)
+                m_s = compute_metrics(p_s, y_test)
+                print(f"    seed {sfp.stem.split('_s')[-1]:>4}  MAE 24h={m_s['mae_24h']:.1f} km")
+                seed_preds.append(p_s)
+            pred       = np.mean(seed_preds, axis=0)
+            ckpt_path  = seed_models[0][1].parent / f"best_{mname}_{tag}_seedavg.pt"
+            n_seeds    = len(seed_preds)
+            print(f"  {mname.upper()}  ({n_seeds}-seed ensemble)")
+        else:
+            model, ckpt_path = load_model_checkpoint(mname, cfg, tag=tag)
+            if model is None:
+                print(f"  [skip] {mname.upper()} — không tìm thấy checkpoint")
+                continue
+            pred = model_predict(model, X_test, cliper_pred=cliper_pred, residual=residual)
+            print(f"  {mname.upper()}")
 
-        pred    = model_predict(model, X_test, cliper_pred=cliper_pred, residual=residual)
         metrics = compute_metrics(pred, y_test)
         ss_24   = skill_score(cliper_metrics["mae_24h"], metrics["mae_24h"])
         ss_48   = skill_score(cliper_metrics["mae_48h"], metrics["mae_48h"])
 
-        print(f"  {mname.upper()}")
         print(f"    MAE 24h = {metrics['mae_24h']:.1f} km  |  "
               f"RMSE 24h = {metrics['rmse_24h']:.1f} km  |  "
               f"Skill 24h = {ss_24:.1f}%")
@@ -650,6 +780,80 @@ def main():
     # Ensemble chỉ các models tốt hơn CLIPER
     if len(good_models) >= 2:
         _make_ensemble(good_models, "GOOD")
+
+    # --- Per-storm MAE breakdown ---
+    if sid_test is not None:
+        print("\n[3b] Per-storm MAE breakdown...")
+        # Chọn best model (mae_24h nhỏ nhất, bỏ cliper)
+        _model_metrics = {k: v for k, v in all_metrics.items() if k != "cliper"}
+        if _model_metrics:
+            _best_name = min(_model_metrics, key=lambda k: _model_metrics[k]["mae_24h"])
+            _best_pred = all_preds[_best_name]
+            print(f"  Using best model: {_best_name.upper()}")
+
+            idx_24, idx_48 = _get_24h_48h_indices(_best_pred.shape[1])
+            unique_sids = np.unique(sid_test)
+            per_storm = []
+            for sid in unique_sids:
+                idxs = np.where(sid_test == sid)[0]
+                # Best model errors
+                err_24 = haversine_km(_best_pred[idxs, idx_24],   _best_pred[idxs, idx_24+1],
+                                      y_test[idxs, idx_24],       y_test[idxs, idx_24+1])
+                err_48 = haversine_km(_best_pred[idxs, idx_48],   _best_pred[idxs, idx_48+1],
+                                      y_test[idxs, idx_48],       y_test[idxs, idx_48+1])
+                # CLIPER errors (cho skill score)
+                c_err_24 = haversine_km(cliper_pred[idxs, idx_24], cliper_pred[idxs, idx_24+1],
+                                        y_test[idxs, idx_24],      y_test[idxs, idx_24+1])
+                c_err_48 = haversine_km(cliper_pred[idxs, idx_48], cliper_pred[idxs, idx_48+1],
+                                        y_test[idxs, idx_48],      y_test[idxs, idx_48+1])
+                mae24, mae48 = float(err_24.mean()), float(err_48.mean())
+                cmae24, cmae48 = float(c_err_24.mean()), float(c_err_48.mean())
+                season = int(sid[:4]) if len(sid) >= 4 and sid[:4].isdigit() else 0
+                per_storm.append({
+                    "sid":           str(sid),
+                    "season":        season,
+                    "n_sequences":   int(len(idxs)),
+                    "mae_24h":       round(mae24, 2),
+                    "mae_48h":       round(mae48, 2),
+                    "cliper_mae_24h": round(cmae24, 2),
+                    "cliper_mae_48h": round(cmae48, 2),
+                    "skill_24h":     round(skill_score(cmae24, mae24), 2),
+                    "skill_48h":     round(skill_score(cmae48, mae48), 2),
+                })
+
+            # In bảng sorted theo SID
+            per_storm.sort(key=lambda x: x["sid"])
+            print(f"\n  {'SID':<16} {'Year':>5} {'N':>4} {'MAE 24h':>8} {'MAE 48h':>9} {'CLIPER 24h':>11} {'Skill 24h':>10} {'Skill 48h':>10}")
+            print(f"  {'-'*16} {'-'*5} {'-'*4} {'-'*8} {'-'*9} {'-'*11} {'-'*10} {'-'*10}")
+            for s in per_storm:
+                print(f"  {s['sid']:<16} {s['season']:>5} {s['n_sequences']:>4} "
+                      f"{s['mae_24h']:>7.1f}  {s['mae_48h']:>8.1f}  "
+                      f"{s['cliper_mae_24h']:>10.1f}  {s['skill_24h']:>8.1f}%  {s['skill_48h']:>8.1f}%")
+
+            # Storms sorted by error (worst on top)
+            worst = sorted(per_storm, key=lambda x: -x["mae_24h"])[:5]
+            best = sorted(per_storm, key=lambda x: x["mae_24h"])[:5]
+            print(f"\n  Top 5 WORST (MAE 24h cao nhất):")
+            for s in worst:
+                print(f"    {s['sid']:<16} MAE 24h={s['mae_24h']:.1f} km  Skill={s['skill_24h']:.1f}%  (n={s['n_sequences']})")
+            print(f"\n  Top 5 BEST  (MAE 24h thấp nhất):")
+            for s in best:
+                print(f"    {s['sid']:<16} MAE 24h={s['mae_24h']:.1f} km  Skill={s['skill_24h']:.1f}%  (n={s['n_sequences']})")
+
+            # Lưu JSON cho phân tích sau
+            import json as _json
+            per_storm_path = fig_dir / "per_storm_metrics.json"
+            fig_dir.mkdir(parents=True, exist_ok=True)
+            with open(per_storm_path, "w", encoding="utf-8") as f:
+                _json.dump({
+                    "tag":         tag,
+                    "best_model":  _best_name,
+                    "n_storms":    len(per_storm),
+                    "per_storm":   per_storm,
+                }, f, indent=2, ensure_ascii=False)
+            print(f"\n  [json] {per_storm_path}")
+    else:
+        print("\n[3b] Per-storm MAE: skipped (sid_test không có trong .npz — chạy lại G3 để có)")
 
     # --- Trajectory labels ---
     print("\n[4] Phân loại quỹ đạo...")

@@ -21,6 +21,8 @@ Checkpoint G6: cải thiện ≥ 10% Val MAE so với LSTM
 import torch
 import torch.nn as nn
 
+from .lstm import _init_head_bias_scs
+
 
 class BiLSTMAttentionModel(nn.Module):
 
@@ -56,6 +58,8 @@ class BiLSTMAttentionModel(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden_size, output_size),
         )
+        # Sprint 1 (no-residual): bias head = tâm SCS, xem ghi chú trong lstm.py
+        _init_head_bias_scs(self.head[-1], output_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """x: [B, lookback, n_features] → [B, 4]"""

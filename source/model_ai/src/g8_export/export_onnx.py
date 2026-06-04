@@ -19,6 +19,7 @@ from pathlib import Path
 
 from src.g4_models import build_model, load_config
 from src.g5_g6_train.utils import log_result
+from src.g7_evaluate.evaluate import _build_model_from_state
 
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -211,7 +212,12 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--tag", default="14feat",
-                        help="Tag pipeline (vd: '14feat', '') — mặc định '14feat'")
+                        help="Tag pipeline (vd: '14feat', 'scs_v11_lb6') — mặc định '14feat'")
+    parser.add_argument("--model", default=None,
+                        help="Chọn model cụ thể (lstm/bilstm/bigru/transformer). "
+                             "Mặc định: tự tìm best từ log.")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Chọn checkpoint multi-seed: best_{model}_{tag}_s{seed}.pt")
     args = parser.parse_args()
     required_tag = args.tag
 
@@ -220,45 +226,55 @@ def main():
     print("=" * 60)
 
     cfg = load_config()
-
     log_path = BASE_DIR / cfg["output"]["results_log"]
-    lookback = cfg["model"]["lookback"]
 
-    # --- Tìm best model ---
-    print(f"\n[1] Tìm best model (tag='{required_tag}')...")
-    model_name, ckpt_path, tag = find_best_model_from_log(log_path, required_tag)
+    suffix = f"_{required_tag}" if required_tag else ""
 
-    if model_name is None or ckpt_path is None:
-        print("  Không tìm thấy trong results_log — thử fallback...")
-        model_name, ckpt_path, tag = find_checkpoint_fallback(cfg, required_tag)
+    # --- Tìm checkpoint ---
+    if args.model and args.seed is not None:
+        # Multi-seed: chỉ định model + seed cụ thể
+        model_name = args.model
+        ckpt_path = BASE_DIR / cfg["output"]["checkpoint_dir"] / f"best_{model_name}{suffix}_s{args.seed}.pt"
+        tag = required_tag
+        if not ckpt_path.exists():
+            print(f"  [error] Checkpoint không tồn tại: {ckpt_path}")
+            return
+        print(f"\n[1] Multi-seed checkpoint: {ckpt_path.name}")
+    else:
+        print(f"\n[1] Tìm best model (tag='{required_tag}')...")
+        model_name, ckpt_path, tag = find_best_model_from_log(log_path, required_tag)
 
-    if model_name is None or ckpt_path is None:
-        print("  [error] Không tìm thấy checkpoint nào. Hãy chạy G5/G6 trước.")
-        return
+        if model_name is None or ckpt_path is None:
+            print("  Không tìm thấy trong results_log — thử fallback...")
+            model_name, ckpt_path, tag = find_checkpoint_fallback(cfg, required_tag)
 
-    # n_features theo tag
-    suffix     = f"_{tag}" if tag else ""
-    n_features = cfg["features"]["n_features"]   # 14 (từ config)
+        if model_name is None or ckpt_path is None:
+            print("  [error] Không tìm thấy checkpoint nào. Hãy chạy G5/G6 trước.")
+            return
+
+    # ONNX output path (kèm seed suffix nếu có)
+    seed_suffix = f"_s{args.seed}" if args.seed is not None else ""
     onnx_path  = BASE_DIR / cfg["output"]["onnx_model"].replace(
-        ".onnx", f"{suffix}.onnx"
+        ".onnx", f"{suffix}{seed_suffix}.onnx"
     )
 
-    print(f"  Best model : {model_name.upper()} (tag='{tag}')")
-    print(f"  Checkpoint : {ckpt_path}")
-    print(f"  ONNX output: {onnx_path}")
-    print(f"  n_features : {n_features}")
-
-    # --- Load model ---
-    print("\n[2] Load model...")
+    # --- Load model với auto-detect kiến trúc từ state_dict ---
+    print("\n[2] Load model + auto-detect kiến trúc...")
     try:
-        model = build_model(model_name, cfg)
         state_dict = torch.load(str(ckpt_path), map_location="cpu", weights_only=True)
-        model.load_state_dict(state_dict)
-        model.eval()
+        model, patched_cfg = _build_model_from_state(state_dict, model_name, cfg)
+        # Lấy lookback + n_features từ checkpoint thật (không phụ thuộc config)
+        lookback   = patched_cfg["model"]["lookback"]
+        n_features = patched_cfg["features"]["n_features"]
         print(f"  [ok] Model loaded: {model_name.upper()}")
     except Exception as e:
         print(f"  [error] Không load được model: {e}")
         return
+
+    print(f"  Best model : {model_name.upper()} (tag='{tag}')")
+    print(f"  Checkpoint : {ckpt_path}")
+    print(f"  ONNX output: {onnx_path}")
+    print(f"  n_features : {n_features}  |  lookback: {lookback}")
 
     # --- Export ONNX ---
     print("\n[3] Export ONNX...")
