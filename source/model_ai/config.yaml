@@ -76,34 +76,30 @@ features:
 
 # --- Model (G3 → G5) ---
 model:
-  lookback: 8        # 8 bước × 6h = 48h nhìn về quá khứ
-  horizon: 8         # 8 bước × 6h = 48h dự đoán tới
-  anchor_steps: [1, 2, 3, 4, 5, 6, 7, 8]  # multi-horizon, 8 bước 6h→48h
-  output_size: 16    # 8 bước × 2 coords (lat, lon) = 16 giá trị đầu ra
+  lookback: 8    
+  horizon: 8      
+  anchor_steps: [1, 2, 3, 4, 5, 6, 7, 8]  
+  output_size: 16    
   hidden_size: 128
   num_layers: 2
-  nhead: 4           # 128/4 = 32 dims/head — chuẩn cho Transformer
+  nhead: 4           
   dropout: 0.2
-  noise_std: 0.05    # Gaussian noise augmentation (scaled space)
+  noise_std: 0.05    
   batch_size: 32
   lr: 0.0005
   max_epochs: 300
-  patience: 40       # Early stopping
-  residual: true     # LSTM/BiLSTM cần CLIPER prior để hội tụ tốt.
-  # --- SWA (Stochastic Weight Averaging — Izmailov et al. 2018) ---
-  swa: true               # Bật SWA: average weights N epoch cuối cho generalization tốt hơn
-  swa_start_frac: 0.75    # Bắt đầu SWA sau 75% max_epochs (vd 225 nếu max=300)
-  swa_lr_scale: 0.5       # SWA learning rate = base_lr × scale
+  patience: 40    
+  residual: true     
+  swa: true              
+  swa_start_frac: 0.75    
+  swa_lr_scale: 0.5       
 
-# --- Loss function ---
 loss:
-  weight_24h: 0.50   # Extra weight cho step 4 (24h) — primary target
-  weight_48h: 0.20   # Extra weight cho step 8 (48h)
-  # Các step còn lại chia đều: (1 - 0.50 - 0.20) / 6 = 0.05 mỗi step
-  lambda_smooth: 1.0 # Smoothness penalty (L2 of 2nd derivative, degrees²)
-  lambda_dir: 0.1    # Directional loss (1 - cos(bearing mismatch))
+  weight_24h: 0.50  
+  weight_48h: 0.20  
+  lambda_smooth: 1.0 
+  lambda_dir: 0.1   
 
-# --- Train/Val/Test split (theo NĂM — không random) ---
 split:
   train: [1979, 2016]
   val:   [2017, 2020]

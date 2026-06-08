@@ -6,6 +6,7 @@ import IntensityChart from './components/IntensityChart'
 import ModelMetricsTable from './components/ModelMetricsTable'
 import StormSelector from './components/StormSelector'
 import TrackAnimator from './components/TrackAnimator'
+import ModelDashboard from './components/ModelDashboard'
 import { fetchStorms, fetchStormDetail } from './api/storms'
 import { MOCK_STORMS } from './api/mockData'
 import { useLocale } from './i18n/LocaleContext'
@@ -23,6 +24,7 @@ export default function App() {
   const [showActual, setShowActual]       = useState(true)
   const [showPredicted, setShowPredicted] = useState(true)
   const [viewMode, setViewMode]           = useState('3d')  // '3d' | '2d'
+  const [mainView, setMainView]           = useState('demo') // 'demo' | 'dashboard'
   const { locale, toggle, t }             = useLocale()
   const { theme, toggle: toggleTheme }    = useTheme()
 
@@ -90,6 +92,34 @@ export default function App() {
       .finally(() => setDetailLoading(false))
   }
 
+  // ─── View Dashboard: layout riêng full-width ───
+  if (mainView === 'dashboard') {
+    return (
+      <div className="app-container app-dashboard-mode">
+        <div className="topbar">
+          <div className="topbar-title">
+            <h1>{t.appTitle}</h1>
+          </div>
+          <div className="topbar-tabs">
+            <button className="tab-btn" onClick={() => setMainView('demo')}>
+              🌐 Demo dự báo
+            </button>
+            <button className="tab-btn tab-active" onClick={() => setMainView('dashboard')}>
+              📊 Model Dashboard
+            </button>
+            <button className="theme-toggle" onClick={toggleTheme}
+                    title={theme === 'dark' ? 'Light' : 'Dark'}>
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
+          </div>
+        </div>
+        <main className="dashboard-main">
+          <ModelDashboard />
+        </main>
+      </div>
+    )
+  }
+
   return (
     <div className="app-container">
       <aside className="sidebar">
@@ -100,6 +130,13 @@ export default function App() {
               <p>{t.appSubtitle}</p>
             </div>
             <div className="header-buttons">
+              <button
+                className="tab-btn-mini"
+                onClick={() => setMainView('dashboard')}
+                title="Xem Model Dashboard"
+              >
+                📊
+              </button>
               <button
                 className="view-toggle"
                 onClick={() => setViewMode(v => v === '3d' ? '2d' : '3d')}

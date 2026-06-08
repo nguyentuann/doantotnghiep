@@ -17,7 +17,7 @@ Endpoints:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import predict, storms, models
+from routers import predict, storms, models, dashboard
 
 app = FastAPI(
     title="Typhoon Tracker API",
@@ -40,6 +40,7 @@ app.add_middleware(
 app.include_router(predict.router)
 app.include_router(storms.router)
 app.include_router(models.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/health", tags=["health"])
