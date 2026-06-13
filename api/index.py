@@ -39,8 +39,25 @@ _ROUTERS = (predict.router, storms.router, models.router, dashboard.router)
 
 
 def _health():
+    import os
+    import traceback
     from services.predictor import is_ready
-    return {"status": "ok", "model_ready": is_ready()}
+    info = {"status": "ok", "model_ready": is_ready()}
+    # ── Chẩn đoán khi model không load (xem file có trong lambda + lỗi gì) ──
+    if not info["model_ready"]:
+        try:
+            from services import predictor
+            p = str(predictor._ONNX_PATH)
+            d = os.path.dirname(p)
+            info["onnx_path"] = p
+            info["onnx_exists"] = os.path.exists(p)
+            info["model_dir_files"] = sorted(os.listdir(d)) if os.path.isdir(d) else "DIR_NOT_FOUND"
+            predictor._session = None
+            predictor._load_session()   # gọi trực tiếp để bắt exception thật
+        except Exception as e:
+            info["load_error"] = f"{type(e).__name__}: {e}"
+            info["trace"] = traceback.format_exc()[-600:]
+    return info
 
 
 # Mount 2 lần: prefix "/api" (path gốc) và "" (nếu Vercel strip /api)
