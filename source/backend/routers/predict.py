@@ -26,18 +26,20 @@ def predict_track(req: PredictRequest):
         raise HTTPException(status_code=503, detail="ONNX model chưa load được. Kiểm tra model_best.onnx.")
 
     try:
-        x = preprocessor.prepare_input(points)
+        x = preprocessor.prepare_input(points, lookback=predictor._lookback)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Lỗi tính features: {e}")
 
     try:
-        pred = predictor.predict(x)                 # (1, 4) scaled
+        pred = predictor.predict(x)                       # (1, 16) residual delta scaled
         scaler = preprocessor._load_scaler()
-        coords = preprocessor.unscale_output(pred, scaler)
+        coords = preprocessor.decode_output(pred, x, scaler)  # (16,) abs lat/lon cho 8 bước 6h
+        # bước: 6,12,18,24,30,36,42,48h → 24h=idx[6,7], 48h=idx[14,15]
+        lat_24h, lon_24h = float(coords[6]), float(coords[7])
+        lat_48h, lon_48h = float(coords[14]), float(coords[15])
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi inference: {e}")
 
-    lat_24h, lon_24h, lat_48h, lon_48h = coords
     origin = points[-1]
     mae_ref = _MAE_REFERENCE.get(model_name, {})
 

@@ -1,9 +1,35 @@
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react'
 import Globe from 'react-globe.gl'
 import { useLocale } from '../i18n/LocaleContext'
+import { useTheme } from '../theme/ThemeContext'
+import { interpolatePredicted6h } from '../utils/trackUtils'
 
 // Tâm mặc định — Biển Đông
 const SCS_VIEW = { lat: 15, lng: 114, altitude: 2.2 }
+
+// Tính hướng di chuyển (bearing) giữa 2 điểm
+function bearingDeg(lat1, lon1, lat2, lon2) {
+  const toR = d => d * Math.PI / 180
+  const dLon = toR(lon2 - lon1)
+  const y = Math.sin(dLon) * Math.cos(toR(lat2))
+  const x = Math.cos(toR(lat1)) * Math.sin(toR(lat2)) - Math.sin(toR(lat1)) * Math.cos(toR(lat2)) * Math.cos(dLon)
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360
+}
+
+function compassDir(deg) {
+  const dirs = ['Bắc','Đông Bắc','Đông','Đông Nam','Nam','Tây Nam','Tây','Tây Bắc']
+  return dirs[Math.round(deg / 45) % 8]
+}
+
+// Thêm field `direction` vào mỗi điểm
+function withDirection(points) {
+  return points.map((p, i) => {
+    if (i === 0) return { ...p, direction: null }
+    const prev = points[i - 1]
+    const deg  = bearingDeg(prev.lat, prev.lon, p.lat, p.lon)
+    return { ...p, direction: deg }
+  })
+}
 
 // Màu theo cường độ gió (Saffir–Simpson)
 function intensityColor(vmax) {
@@ -16,11 +42,12 @@ function intensityColor(vmax) {
   return '#a855f7'                           // C5  — tím
 }
 
-export default function GlobeMap({ selectedStorm, showActual = true, showPredicted = true }) {
+export default function GlobeMap({ selectedStorm, showActual = true, showPredicted = true, animStep = null }) {
   const globeRef     = useRef()
   const containerRef = useRef()
   const [size, setSize] = useState({ width: 800, height: 600 })
   const { t } = useLocale()
+  const { theme } = useTheme()
 
   // Theo dõi kích thước container để Globe lấp đầy
   useEffect(() => {
@@ -51,39 +78,83 @@ export default function GlobeMap({ selectedStorm, showActual = true, showPredict
     }
   }, [selectedStorm])
 
+  // --- Phát hiện điểm đổ bộ (vào đất liền VN/TQ) ---
+  // Dừng hiển thị khi lon < 108.5°E (bờ đông Việt Nam / Hải Nam)
+  // Trả về index điểm ĐẦU TIÊN đi qua bờ biển (slice tới index đó để hiện điểm đổ bộ)
+  function landfallIndex(points) {
+    for (let i = 1; i < points.length; i++) {
+      if (points[i].lon < 108.5) return i
+    }
+    return points.length
+  }
+
+  // --- Pre-compute 6h interpolated predicted track ---
+  const full6hPredicted = useMemo(() => {
+    if (!selectedStorm) return []
+    const cutoff   = selectedStorm.cutoff_index ?? selectedStorm.track.length
+    const cutoffPt = selectedStorm.track[cutoff - 1] ?? selectedStorm.track.at(-1)
+    const raw      = selectedStorm.predicted_track ?? []
+    return interpolatePredicted6h(raw, cutoffPt)
+  }, [selectedStorm])
+
   // --- Paths: 2 đường chính ---
   const pathsData = useMemo(() => {
     if (!selectedStorm) return []
-    const cutoff = selectedStorm.cutoff_index ?? selectedStorm.track.length
-    const paths  = []
+    const cutoff    = selectedStorm.cutoff_index ?? selectedStorm.track.length
+    const fullTrack = selectedStorm.track
 
-    // 1. Track thực tế toàn bộ — màu theo cường độ
-    if (showActual && selectedStorm.track.length >= 2) {
+    const visTrack  = animStep === null ? fullTrack : fullTrack.slice(0, animStep + 1)
+    const predStart = animStep === null ? full6hPredicted.length : Math.max(0, animStep - fullTrack.length + 1)
+    const visPred   = full6hPredicted.slice(0, predStart)
+
+    const paths = []
+
+    if (showActual && visTrack.length >= 2) {
       paths.push({
         id:     'actual',
-        points: selectedStorm.track,
-        colors: selectedStorm.track.map(p => intensityColor(p.vmax)),
+        points: visTrack,
+        colors: visTrack.map(p => intensityColor(p.vmax)),
       })
     }
 
-    // 2. Track dự đoán từ điểm vào SCS — dashed cam
-    const pred = selectedStorm.predicted_track ?? []
-    if (showPredicted && pred.length >= 2) {
-      const cutoffPt = selectedStorm.track[cutoff - 1] ?? selectedStorm.track.at(-1)
-      paths.push({
-        id:     'predicted',
-        points: [cutoffPt, ...pred],
-      })
+    if (showPredicted && visPred.length >= 1) {
+      const cutoffPt = fullTrack[cutoff - 1] ?? fullTrack.at(-1)
+      const allPred  = [cutoffPt, ...visPred]
+      const stopIdx  = landfallIndex(allPred)
+      const predPts  = allPred.slice(0, stopIdx + 1)
+      if (predPts.length >= 2) {
+        paths.push({ id: 'predicted', points: predPts })
+      }
     }
 
     return paths
-  }, [selectedStorm, showActual, showPredicted])
+  }, [selectedStorm, showActual, showPredicted, animStep, full6hPredicted])
 
-  // --- Markers: chỉ hiện khi showActual ---
+  // --- Markers: actual + predicted gộp chung, có direction ---
   const pointsData = useMemo(() => {
-    if (!selectedStorm || !showActual) return []
-    return selectedStorm.track
-  }, [selectedStorm, showActual])
+    if (!selectedStorm) return []
+    const cutoff    = selectedStorm.cutoff_index ?? selectedStorm.track.length
+    const fullTrack = selectedStorm.track
+
+    const visTrack  = animStep === null ? fullTrack : fullTrack.slice(0, animStep + 1)
+    const predStart = animStep === null ? full6hPredicted.length : Math.max(0, animStep - fullTrack.length + 1)
+    const visPred   = full6hPredicted.slice(0, predStart)
+
+    const result = []
+
+    if (showActual) {
+      withDirection(visTrack).forEach(p => result.push({ ...p, isPredicted: false, isAIPoint: false }))
+    }
+
+    if (showPredicted && visPred.length > 0) {
+      const cutoffPt = fullTrack[cutoff - 1] ?? fullTrack.at(-1)
+      withDirection([cutoffPt, ...visPred]).slice(1).forEach(p =>
+        result.push({ ...p, isPredicted: true })
+      )
+    }
+
+    return result
+  }, [selectedStorm, showActual, showPredicted, animStep, full6hPredicted])
 
   // --- Marker điểm vào SCS ---
   const cutoffData = useMemo(() => {
@@ -104,34 +175,43 @@ export default function GlobeMap({ selectedStorm, showActual = true, showPredict
     }))
   }, [selectedStorm, t])
 
-  // --- Tooltip khi hover điểm track (cập nhật khi đổi ngôn ngữ) ---
-  const pointLabel = useCallback(d => `
-    <div style="
-      background:#1a1a2e;
-      padding:8px 12px;
-      border-radius:8px;
-      border:1px solid #0f3460;
-      color:#eee;
-      font-size:12px;
-      line-height:1.6;
-    ">
-      <b style="color:#e94560">${d.time}</b><br/>
-      ${d.lat.toFixed(1)}°N &nbsp; ${d.lon.toFixed(1)}°E<br/>
-      ${t.tooltip.wind} <b>${d.vmax ?? '--'} kt</b> &nbsp;|&nbsp; ${t.tooltip.pres} <b>${d.pmin ?? '--'} hPa</b>
-    </div>
-  `, [t])
+  // --- Tooltip khi hover điểm track ---
+  const pointLabel = useCallback(d => {
+    const timeStr = d.time ?? d.iso_time ?? ''
+    const dirStr  = d.direction != null
+      ? `${compassDir(d.direction)} (${Math.round(d.direction)}°)`
+      : '—'
+    const typeColor = d.isPredicted ? '#f59e0b' : '#e94560'
+    const typeLabel = d.isPredicted ? '🔮 Dự đoán AI' : '📍 Thực tế'
+    return `
+      <div style="
+        background:#1a1a2e;padding:8px 12px;border-radius:8px;
+        border:1px solid #0f3460;color:#eee;font-size:12px;line-height:1.8;
+        min-width:160px;
+      ">
+        <b style="color:${typeColor}">${typeLabel}</b><br/>
+        <b>${timeStr}</b><br/>
+        ${d.lat.toFixed(2)}°N &nbsp; ${d.lon.toFixed(2)}°E<br/>
+        ${t.tooltip.wind} <b>${d.vmax ?? '--'} kt</b> &nbsp;|&nbsp; ${t.tooltip.pres} <b>${d.pmin ?? '--'} hPa</b><br/>
+        ↗ ${dirStr}
+      </div>
+    `
+  }, [t])
 
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#000' }}>
+    <div ref={containerRef} style={{ width: '100%', height: '100%', background: theme === 'dark' ? '#000' : '#c8d8e8' }}>
       <Globe
         ref={globeRef}
         width={size.width}
         height={size.height}
 
-        // Texture địa cầu — ảnh ban đêm
-        globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
+        globeImageUrl={theme === 'dark'
+          ? '//unpkg.com/three-globe/example/img/earth-night.jpg'
+          : '//unpkg.com/three-globe/example/img/earth-day.jpg'}
         bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
-        backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
+        backgroundImageUrl={theme === 'dark'
+          ? '//unpkg.com/three-globe/example/img/night-sky.png'
+          : null}
 
         // === Track lịch sử + đường dự báo ===
         pathsData={pathsData}
@@ -146,9 +226,9 @@ export default function GlobeMap({ selectedStorm, showActual = true, showPredict
         pointsData={pointsData}
         pointLat="lat"
         pointLng="lon"
-        pointColor={d => intensityColor(d.vmax)}
+        pointColor={d => d.isPredicted ? '#f59e0b' : intensityColor(d.vmax)}
         pointAltitude={0.006}
-        pointRadius={0.28}
+        pointRadius={d => d.isPredicted ? (d.isAIPoint ? 0.45 : 0.2) : 0.28}
         pointLabel={pointLabel}
 
         // === Vòng sóng tại điểm vào SCS ===

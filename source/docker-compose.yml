@@ -1,0 +1,42 @@
+# ============================================================
+# docker-compose — Typhoon Tracker (backend + frontend)
+# ------------------------------------------------------------
+# Chạy từ thư mục `source/`:
+#   docker compose up --build -d        # build + chạy nền
+#   docker compose logs -f              # xem log
+#   docker compose down                 # dừng + xóa container
+#
+# Truy cập:
+#   Frontend : http://localhost:5173
+#   Backend  : http://localhost:8000  (docs: /docs)
+# ============================================================
+services:
+  backend:
+    build:
+      context: .                      # context = source/ (cần model_ai/)
+      dockerfile: backend/Dockerfile
+    image: typhoon-backend:latest
+    container_name: typhoon-backend
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    networks:
+      - typhoon-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: typhoon-frontend:latest
+    container_name: typhoon-frontend
+    ports:
+      - "5173:80"                     # host 5173 → nginx 80
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - typhoon-net
+
+networks:
+  typhoon-net:
+    driver: bridge

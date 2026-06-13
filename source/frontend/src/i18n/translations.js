@@ -38,6 +38,15 @@ export const translations = {
       wind: 'Gió',
       pres: 'Áp',
     },
+    chartIntensity: 'Cường độ theo thời gian',
+    metrics: {
+      title:   'Kết quả mô hình (Test 2021–2024)',
+      model:   'Mô hình',
+      mae24:   'MAE 24h',
+      skill24: 'Skill 24h',
+      mae48:   'MAE 48h',
+      note:    'CLIPER baseline: MAE 24h = 72.6 km',
+    },
   },
 
   en: {
@@ -78,6 +87,15 @@ export const translations = {
     tooltip: {
       wind: 'Wind',
       pres: 'Pres',
+    },
+    chartIntensity: 'Intensity over time',
+    metrics: {
+      title:   'Model Results (Test 2021–2024)',
+      model:   'Model',
+      mae24:   'MAE 24h',
+      skill24: 'Skill 24h',
+      mae48:   'MAE 48h',
+      note:    'CLIPER baseline: MAE 24h = 72.6 km',
     },
   },
 }

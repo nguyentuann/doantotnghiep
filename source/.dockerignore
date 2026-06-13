@@ -1,0 +1,30 @@
+# Build context = source/ (cho backend image)
+# Loại các artifact NẶNG không cần cho inference — giữ lại model_ai/models/*.pkl
+# và model_ai/models/final/*.onnx
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.venv/
+**/venv/
+**/.pytest_cache/
+**/.ipynb_checkpoints/
+
+# Node / frontend (build riêng)
+frontend/
+
+# Dữ liệu thô & kết quả train — KHÔNG cần cho backend inference (nhiều GB)
+model_ai/data/
+model_ai/results/
+model_ai/models/checkpoints/
+model_ai/notebooks/
+model_ai/src/
+model_ai/scripts/
+model_ai/config.yaml
+
+# Git / docs / IDE
+.git/
+**/*.md
+.vscode/
+.idea/

@@ -4,7 +4,7 @@ era5_extractor.py
 Interpolate dữ liệu khí quyển tới từng điểm track bão.
 
 Nguồn dữ liệu:
-  - ERA5 pressure:  data/era5/pressure/era5_pressure_{year}_{month:02d}.nc  (u/v wind 200+850 hPa)
+  - ERA5 pressure:  data/era5/pressure_4lev/era5_pressure_{year}.nc  (u/v wind 200/500/700/850 hPa + geopotential)
   - NOAA OISST v2:  data/noaa_sst/sst.mnmean.nc  (SST monthly mean 1°, 1 file duy nhất)
 
 Output cho mỗi điểm track:
@@ -43,7 +43,7 @@ class ERA5WindShear:
     """
 
     def __init__(self, era5_dir: Path):
-        self.pres_dir = Path(era5_dir) / "pressure"
+        self.pres_dir = Path(era5_dir)   # era5_dir trỏ thẳng vào folder pressure
         self._cache: dict = {}   # key: year → xr.Dataset hoặc None
 
     def _load(self, year: int):
@@ -157,6 +157,452 @@ class NOAAsstExtractor:
         if self._ds is not None:
             self._ds.close()
             self._ds = None
+
+
+# =====================================================================
+# Batch extraction: Multi-level pressure features
+# (u500, v500, u700, v700, z500) — Sprint 1 steering features
+# =====================================================================
+
+_G = 9.80665  # m/s² — dùng để chuyển geopotential (m²/s²) → height (m)
+
+
+def extract_multi_level_features(feat_df: pd.DataFrame, config: dict,
+                                  radius_deg: float = 10.0) -> pd.DataFrame:
+    """
+    Thêm 11 cột steering + vorticity features vào DataFrame:
+    u500, v500, u700, v700, z500, u200, v200, u850, v850, vort500, vort850.
+
+    Dùng BOX AVERAGE ±radius_deg quanh tâm bão thay vì point extraction.
+    Box average loại bỏ tín hiệu xoáy của bão (vortex), chỉ giữ lại
+    environmental steering flow — đây là cách tính chuẩn trong meteorology.
+
+    - u500/v500 : trung bình U/V-wind 500 hPa trong box ±10° (m/s)
+    - u700/v700 : trung bình U/V-wind 700 hPa trong box ±10° (m/s)
+    - z500      : trung bình Geopotential height 500 hPa trong box ±10° (m)
+    - u200/v200 : trung bình U/V-wind 200 hPa (upper-level outflow, recurvature)
+    - u850/v850 : trung bình U/V-wind 850 hPa (low-level steering)
+    - vort500   : relative vorticity ζ = ∂v/∂x − ∂u/∂y tại 500 hPa (×10⁵ s⁻¹)
+    - vort850   : relative vorticity tại 850 hPa (low-level circulation)
+    """
+    base_dir = Path(__file__).parent.parent.parent
+    feat_df  = feat_df.copy()
+
+    TARGET_COLS = ["u500", "v500", "u700", "v700", "z500", "u200", "v200", "u850", "v850",
+                   "vort500", "vort850",
+                   "asteer_u", "asteer_v",        # DLM 500+700 hPa annulus (mid-trop)
+                   "asteer_u850", "asteer_v850",  # 850 hPa annulus (low-level, weak storms)
+                   "asteer_u200", "asteer_v200"]  # 200 hPa annulus (upper-level, recurving)
+    for col in TARGET_COLS:
+        feat_df[col] = 0.0
+
+    # Annulus radii (degrees) cho deep-layer-mean steering — loại bỏ xoáy bão
+    # 3° ≈ 330 km (inner, bỏ vortex), 7° ≈ 770 km (outer) — Chan & Gray (1982)
+    ANNULUS_INNER_DEG = 3.0
+    ANNULUS_OUTER_DEG = 7.0
+
+    if not HAS_XARRAY:
+        print("[ERA5-ML] xarray chưa cài — fallback về 0.0")
+        return feat_df
+
+    era5_dir = base_dir / config["data"]["era5_dir"]
+    wind_ext = ERA5WindShear(era5_dir)
+
+    n     = len(feat_df)
+    times = pd.to_datetime(feat_df["ISO_TIME"])
+    lats  = feat_df["LAT"].values
+    lons  = feat_df["LON"].values
+    years = times.dt.year.values
+
+    u500_vals = np.full(n, np.nan, dtype=np.float32)
+    v500_vals = np.full(n, np.nan, dtype=np.float32)
+    u700_vals = np.full(n, np.nan, dtype=np.float32)
+    v700_vals = np.full(n, np.nan, dtype=np.float32)
+    z500_vals = np.full(n, np.nan, dtype=np.float32)
+    u200_vals = np.full(n, np.nan, dtype=np.float32)
+    v200_vals = np.full(n, np.nan, dtype=np.float32)
+    u850_vals = np.full(n, np.nan, dtype=np.float32)
+    v850_vals = np.full(n, np.nan, dtype=np.float32)
+    vort500_vals = np.full(n, np.nan, dtype=np.float32)
+    vort850_vals = np.full(n, np.nan, dtype=np.float32)
+    asteer_u_vals = np.full(n, np.nan, dtype=np.float32)
+    asteer_v_vals = np.full(n, np.nan, dtype=np.float32)
+    asteer_u850_vals = np.full(n, np.nan, dtype=np.float32)
+    asteer_v850_vals = np.full(n, np.nan, dtype=np.float32)
+    asteer_u200_vals = np.full(n, np.nan, dtype=np.float32)
+    asteer_v200_vals = np.full(n, np.nan, dtype=np.float32)
+
+    # Per-run cache: lưu sau mỗi năm để tránh mất tiến độ nếu bị crash
+    _cache_path = base_dir / "data/features/_era5ml_cache.npz"
+    _cache_path.parent.mkdir(parents=True, exist_ok=True)
+    if _cache_path.exists():
+        try:
+            cached = np.load(_cache_path)
+            _keys = {"u500": u500_vals, "v500": v500_vals, "u700": u700_vals,
+                     "v700": v700_vals, "z500": z500_vals, "u200": u200_vals,
+                     "v200": v200_vals, "u850": u850_vals, "v850": v850_vals,
+                     "vort500": vort500_vals, "vort850": vort850_vals,
+                     "asteer_u": asteer_u_vals, "asteer_v": asteer_v_vals,
+                     "asteer_u850": asteer_u850_vals, "asteer_v850": asteer_v850_vals,
+                     "asteer_u200": asteer_u200_vals, "asteer_v200": asteer_v200_vals}
+            for k, arr in _keys.items():
+                if k in cached and cached[k].shape == arr.shape:
+                    arr[:] = cached[k]
+            n_cached = int((~np.isnan(u500_vals)).sum())
+            print(f"[ERA5-ML] Cache loaded: {n_cached:,}/{n:,} rows đã có dữ liệu")
+        except Exception as e:
+            print(f"[ERA5-ML] Cache load lỗi ({e}) — bắt đầu từ đầu")
+
+    def _save_cache():
+        np.savez(_cache_path, u500=u500_vals, v500=v500_vals, u700=u700_vals,
+                 v700=v700_vals, z500=z500_vals, u200=u200_vals,
+                 v200=v200_vals, u850=u850_vals, v850=v850_vals,
+                 vort500=vort500_vals, vort850=vort850_vals,
+                 asteer_u=asteer_u_vals, asteer_v=asteer_v_vals,
+                 asteer_u850=asteer_u850_vals, asteer_v850=asteer_v850_vals,
+                 asteer_u200=asteer_u200_vals, asteer_v200=asteer_v200_vals)
+
+    unique_years = np.unique(years)
+
+    for yi, year in enumerate(unique_years):
+        year_mask = years == year
+        year_idxs = np.where(year_mask)[0]
+
+        # Skip năm đã có đủ cache (kiểm tra tất cả annulus features mới nhất)
+        if (not np.isnan(u500_vals[year_idxs]).any()
+                and not np.isnan(vort500_vals[year_idxs]).any()
+                and not np.isnan(asteer_u_vals[year_idxs]).any()
+                and not np.isnan(asteer_u850_vals[year_idxs]).any()
+                and not np.isnan(asteer_u200_vals[year_idxs]).any()):
+            n_yr = int((~np.isnan(u500_vals[year_idxs])).sum())
+            print(f"  [ERA5-ML] {year} ({yi+1}/{len(unique_years)}): skip (cache {n_yr} rows ✓)", flush=True)
+            continue
+
+        print(f"  [ERA5-ML] {year} ({yi+1}/{len(unique_years)}): mở file...", flush=True)
+        ds = wind_ext._load(year)
+        if ds is None:
+            print(f"  [ERA5-ML] {year}: không có file — bỏ qua", flush=True)
+            continue
+
+        try:
+            pl    = ds["pressure_level"].values
+            has_z = "z" in ds.data_vars or "geopotential" in ds.data_vars
+
+            def get_pl_idx(target):
+                diffs = np.abs(pl - target)
+                return int(np.argmin(diffs)) if diffs.min() < 5.0 else None
+
+            idx_200 = get_pl_idx(200.0)
+            idx_500 = get_pl_idx(500.0)
+            idx_700 = get_pl_idx(700.0)
+            idx_850 = get_pl_idx(850.0)
+
+            if idx_500 is None and idx_700 is None:
+                print(f"  [ERA5-ML] {year}: không có 500/700 hPa — bỏ qua", flush=True)
+                continue
+
+            time_coord = "valid_time" if "valid_time" in ds.coords else "time"
+            era5_times = pd.DatetimeIndex(ds[time_coord].values)
+            era5_lats  = ds["latitude"].values
+            era5_lons  = ds["longitude"].values
+
+            # Load toàn bộ u/v/z vào RAM một lần
+            if "time" in ds.dims:
+                u_full = ds["u"].mean(dim="time", skipna=True).values.astype(np.float32)
+                v_full = ds["v"].mean(dim="time", skipna=True).values.astype(np.float32)
+                z_full = None
+                if has_z:
+                    zvar = "z" if "z" in ds.data_vars else "geopotential"
+                    z_full = (ds[zvar].mean(dim="time", skipna=True).values.astype(np.float32) / _G)
+            else:
+                u_full = ds["u"].values.astype(np.float32)  # (n_vt, n_pl, nlat, nlon)
+                v_full = ds["v"].values.astype(np.float32)
+                z_full = None
+                if has_z:
+                    zvar = "z" if "z" in ds.data_vars else "geopotential"
+                    z_full = ds[zvar].values.astype(np.float32) / _G
+
+            # ── Tính relative vorticity ζ = ∂v/∂x − ∂u/∂y (×10⁵ s⁻¹) ──
+            # ζ ~ 10⁻⁵ s⁻¹ cho synoptic features → nhân 10⁵ để có giá trị order O(1-10)
+            R_EARTH = 6371e3  # m
+            lat_step_deg = era5_lats[1] - era5_lats[0]  # signed
+            lon_step_deg = era5_lons[1] - era5_lons[0]  # signed
+            lat_step_rad = np.deg2rad(lat_step_deg)
+            lon_step_rad = np.deg2rad(lon_step_deg)
+            # cos(lat) (1, 1, nlat, 1) — broadcast cho axis (vt, pl, lat, lon)
+            cos_lat = np.cos(np.deg2rad(era5_lats)).clip(min=0.01).astype(np.float32)
+            cos_lat_b = cos_lat[None, None, :, None]
+
+            du_dlat = np.gradient(u_full, axis=2)
+            dv_dlon = np.gradient(v_full, axis=3)
+            dudy = du_dlat / (R_EARTH * lat_step_rad)
+            dvdx = dv_dlon / (R_EARTH * cos_lat_b * lon_step_rad)
+            vort_full = (dvdx - dudy).astype(np.float32) * 1e5  # ×10⁵ s⁻¹
+            del du_dlat, dv_dlon, dudy, dvdx
+
+            storm_times = times.iloc[year_idxs]
+            nearest_idx = era5_times.get_indexer(storm_times, method="nearest")
+
+            n_done = 0
+            for local_i, global_i in enumerate(year_idxs):
+                ti   = nearest_idx[local_i]
+                slat = lats[global_i]
+                slon = lons[global_i]
+
+                # Box ±radius_deg quanh tâm bão
+                lat_mask = (era5_lats >= slat - radius_deg) & (era5_lats <= slat + radius_deg)
+                lon_mask = (era5_lons >= slon - radius_deg) & (era5_lons <= slon + radius_deg)
+
+                if lat_mask.sum() == 0 or lon_mask.sum() == 0:
+                    # Fallback: điểm gần nhất nếu box rỗng (bão gần biên domain)
+                    lat_mask = np.array([np.argmin(np.abs(era5_lats - slat))])
+                    lon_mask = np.array([np.argmin(np.abs(era5_lons - slon))])
+                    box_u = lambda field: field[np.ix_(lat_mask, lon_mask)]
+                    box_v = box_u
+                else:
+                    def box_u(field): return field[np.ix_(lat_mask, lon_mask)]
+                    box_v = box_u
+
+                ix = np.ix_(lat_mask, lon_mask)
+                if idx_200 is not None:
+                    u200_vals[global_i] = float(np.nanmean(u_full[ti, idx_200][ix]))
+                    v200_vals[global_i] = float(np.nanmean(v_full[ti, idx_200][ix]))
+                if idx_500 is not None:
+                    u500_vals[global_i] = float(np.nanmean(u_full[ti, idx_500][ix]))
+                    v500_vals[global_i] = float(np.nanmean(v_full[ti, idx_500][ix]))
+                    vort500_vals[global_i] = float(np.nanmean(vort_full[ti, idx_500][ix]))
+                if idx_700 is not None:
+                    u700_vals[global_i] = float(np.nanmean(u_full[ti, idx_700][ix]))
+                    v700_vals[global_i] = float(np.nanmean(v_full[ti, idx_700][ix]))
+                if idx_850 is not None:
+                    u850_vals[global_i] = float(np.nanmean(u_full[ti, idx_850][ix]))
+                    v850_vals[global_i] = float(np.nanmean(v_full[ti, idx_850][ix]))
+                    vort850_vals[global_i] = float(np.nanmean(vort_full[ti, idx_850][ix]))
+                if z_full is not None and idx_500 is not None:
+                    z500_vals[global_i] = float(np.nanmean(z_full[ti, idx_500][ix]))
+
+                # ── Annulus steering (3-7° từ tâm, bỏ vortex) ──
+                # Chỉ tính khi box đủ rộng (boolean mask, không phải fallback 1-điểm)
+                if (lat_mask.dtype == bool and lon_mask.dtype == bool
+                        and lat_mask.sum() > 1 and lon_mask.sum() > 1):
+                    lat_sub = era5_lats[lat_mask]
+                    lon_sub = era5_lons[lon_mask]
+                    LATG, LONG = np.meshgrid(lat_sub, lon_sub, indexing="ij")
+                    dlat_d = LATG - slat
+                    dlon_d = (LONG - slon) * math.cos(math.radians(slat))
+                    dist_d = np.sqrt(dlat_d ** 2 + dlon_d ** 2)
+                    ann = (dist_d >= ANNULUS_INNER_DEG) & (dist_d <= ANNULUS_OUTER_DEG)
+                    if ann.any():
+                        # Mid-trop deep-layer mean (500+700 hPa) — primary steering
+                        if idx_500 is not None and idx_700 is not None:
+                            dlm_u = (u_full[ti, idx_500][ix] + u_full[ti, idx_700][ix]) / 2.0
+                            dlm_v = (v_full[ti, idx_500][ix] + v_full[ti, idx_700][ix]) / 2.0
+                        elif idx_500 is not None:
+                            dlm_u = u_full[ti, idx_500][ix]
+                            dlm_v = v_full[ti, idx_500][ix]
+                        else:
+                            dlm_u = u_full[ti, idx_700][ix]
+                            dlm_v = v_full[ti, idx_700][ix]
+                        asteer_u_vals[global_i] = float(np.nanmean(dlm_u[ann]))
+                        asteer_v_vals[global_i] = float(np.nanmean(dlm_v[ann]))
+
+                        # Low-level annulus (850 hPa) — quan trọng cho bão yếu (Cat1/TS)
+                        if idx_850 is not None:
+                            u850_box = u_full[ti, idx_850][ix]
+                            v850_box = v_full[ti, idx_850][ix]
+                            asteer_u850_vals[global_i] = float(np.nanmean(u850_box[ann]))
+                            asteer_v850_vals[global_i] = float(np.nanmean(v850_box[ann]))
+
+                        # Upper-level annulus (200 hPa) — recurvature signal
+                        if idx_200 is not None:
+                            u200_box = u_full[ti, idx_200][ix]
+                            v200_box = v_full[ti, idx_200][ix]
+                            asteer_u200_vals[global_i] = float(np.nanmean(u200_box[ann]))
+                            asteer_v200_vals[global_i] = float(np.nanmean(v200_box[ann]))
+
+                n_done += 1
+
+            print(f"  [ERA5-ML] {year}: {n_done:,} rows ✓", flush=True)
+
+        except Exception as e:
+            print(f"  [ERA5-ML] {year}: lỗi — {e}", flush=True)
+        finally:
+            # Lưu cache sau mỗi năm — tránh mất tiến độ nếu crash
+            _save_cache()
+            if year in wind_ext._cache and wind_ext._cache[year] is not None:
+                wind_ext._cache[year].close()
+                del wind_ext._cache[year]
+
+    wind_ext.close()
+
+    feat_df["u500"] = u500_vals
+    feat_df["v500"] = v500_vals
+    feat_df["u700"] = u700_vals
+    feat_df["v700"] = v700_vals
+    feat_df["z500"] = z500_vals
+    feat_df["u200"] = u200_vals
+    feat_df["v200"] = v200_vals
+    feat_df["u850"] = u850_vals
+    feat_df["v850"] = v850_vals
+    feat_df["vort500"] = vort500_vals
+    feat_df["vort850"] = vort850_vals
+    feat_df["asteer_u"] = asteer_u_vals
+    feat_df["asteer_v"] = asteer_v_vals
+    feat_df["asteer_u850"] = asteer_u850_vals
+    feat_df["asteer_v850"] = asteer_v850_vals
+    feat_df["asteer_u200"] = asteer_u200_vals
+    feat_df["asteer_v200"] = asteer_v200_vals
+
+    # Fill NaN: median cùng tháng → global median
+    month_col = times.dt.month
+    for col in TARGET_COLS:
+        feat_df[col] = feat_df.groupby(month_col)[col].transform(
+            lambda s: s.fillna(s.median())
+        )
+        gmed = feat_df[col].median()
+        feat_df[col] = feat_df[col].fillna(0.0 if np.isnan(gmed) else gmed)
+
+    covered = int((~np.isnan(u500_vals)).sum())
+    print(f"[ERA5-ML] coverage u500: {covered:,}/{n:,} rows ({covered/n*100:.1f}%)")
+    return feat_df
+
+
+# =====================================================================
+# Batch extraction: Steering Flow (steering_u, steering_v)
+# =====================================================================
+
+def extract_steering_features(feat_df: pd.DataFrame, config: dict,
+                               radius_deg: float = 5.0) -> pd.DataFrame:
+    """
+    Thêm cột steering_u và steering_v vào DataFrame features.
+
+    Steering flow = trung bình U/V tại (850+200 hPa) trong vùng ±radius_deg
+    xung quanh tâm bão. Đây là luồng gió môi trường "cuốn" bão di chuyển.
+
+    Parameters
+    ----------
+    feat_df    : DataFrame output của build_features()
+    config     : dict từ config.yaml
+    radius_deg : bán kính box trung bình (degrees), mặc định 5°
+
+    Returns
+    -------
+    DataFrame với 2 cột mới: steering_u (m/s), steering_v (m/s)
+    """
+    base_dir = Path(__file__).parent.parent.parent
+    feat_df  = feat_df.copy()
+
+    if not HAS_XARRAY:
+        print("[ERA5-Steering] xarray chưa cài — fallback về 0.0")
+        feat_df["steering_u"] = 0.0
+        feat_df["steering_v"] = 0.0
+        return feat_df
+
+    era5_dir = base_dir / config["data"]["era5_dir"]
+    wind_ext = ERA5WindShear(era5_dir)
+
+    n = len(feat_df)
+    su_vals = np.full(n, np.nan, dtype=np.float32)
+    sv_vals = np.full(n, np.nan, dtype=np.float32)
+
+    times = pd.to_datetime(feat_df["ISO_TIME"])
+    lats  = feat_df["LAT"].values
+    lons  = feat_df["LON"].values
+    years = times.dt.year.values
+    unique_years = np.unique(years)
+
+    for yi, year in enumerate(unique_years):
+        year_mask = years == year
+        year_idxs = np.where(year_mask)[0]
+
+        print(f"  [Steering] {year} ({yi+1}/{len(unique_years)}): mở file...", flush=True)
+        ds = wind_ext._load(year)
+        if ds is None:
+            print(f"  [Steering] {year}: không có file ERA5 — bỏ qua", flush=True)
+            continue
+
+        try:
+            time_coord = "valid_time" if "valid_time" in ds.coords else "time"
+            era5_times = pd.DatetimeIndex(ds[time_coord].values)
+            era5_lats  = ds["latitude"].values
+            era5_lons  = ds["longitude"].values
+            pl         = ds["pressure_level"].values
+
+            idx_200 = int(np.argmin(np.abs(pl - 200.0)))
+            idx_850 = int(np.argmin(np.abs(pl - 850.0)))
+
+            print(f"    đọc u/v vào RAM...", flush=True)
+            if "time" in ds.dims:
+                u_full = ds["u"].mean(dim="time", skipna=True).values.astype(np.float32)
+                v_full = ds["v"].mean(dim="time", skipna=True).values.astype(np.float32)
+            else:
+                u_full = ds["u"].values.astype(np.float32)  # (n_vt, n_pl, nlat, nlon)
+                v_full = ds["v"].values.astype(np.float32)
+
+            # Steering = mean of 850 and 200 hPa
+            su_full = (u_full[:, idx_200] + u_full[:, idx_850]) / 2.0  # (n_vt, nlat, nlon)
+            sv_full = (v_full[:, idx_200] + v_full[:, idx_850]) / 2.0
+
+            storm_times = times.iloc[year_idxs]
+            nearest_idx = era5_times.get_indexer(storm_times, method="nearest")
+
+            # Lat tăng dần cho slicing nhất quán
+            lat_asc = era5_lats[0] < era5_lats[-1]
+
+            n_done = 0
+            for local_i, global_i in enumerate(year_idxs):
+                ti   = nearest_idx[local_i]
+                slat = lats[global_i]
+                slon = lons[global_i]
+
+                # Box ±radius_deg
+                lat_lo = slat - radius_deg
+                lat_hi = slat + radius_deg
+                lon_lo = slon - radius_deg
+                lon_hi = slon + radius_deg
+
+                lat_mask = (era5_lats >= min(lat_lo, lat_hi)) & (era5_lats <= max(lat_lo, lat_hi))
+                lon_mask = (era5_lons >= lon_lo) & (era5_lons <= lon_hi)
+
+                if lat_mask.sum() == 0 or lon_mask.sum() == 0:
+                    # Điểm nằm ngoài ERA5 domain — fallback về tại điểm
+                    lat_idx = int(np.argmin(np.abs(era5_lats - slat)))
+                    lon_idx = int(np.argmin(np.abs(era5_lons - slon)))
+                    su_vals[global_i] = su_full[ti, lat_idx, lon_idx]
+                    sv_vals[global_i] = sv_full[ti, lat_idx, lon_idx]
+                else:
+                    box_su = su_full[ti][np.ix_(lat_mask, lon_mask)]
+                    box_sv = sv_full[ti][np.ix_(lat_mask, lon_mask)]
+                    su_vals[global_i] = float(np.nanmean(box_su))
+                    sv_vals[global_i] = float(np.nanmean(box_sv))
+                n_done += 1
+
+            print(f"  [Steering] {year}: {n_done:,} rows ✓", flush=True)
+
+        except Exception as e:
+            print(f"  [Steering] {year}: lỗi — {e}", flush=True)
+        finally:
+            if year in wind_ext._cache and wind_ext._cache[year] is not None:
+                wind_ext._cache[year].close()
+                del wind_ext._cache[year]
+
+    wind_ext.close()
+
+    feat_df["steering_u"] = su_vals
+    feat_df["steering_v"] = sv_vals
+
+    # Fill NaN: median cùng tháng → global median → 0
+    month_col = times.dt.month
+    for col in ["steering_u", "steering_v"]:
+        feat_df[col] = feat_df.groupby(month_col)[col].transform(
+            lambda s: s.fillna(s.median())
+        )
+        gmed = feat_df[col].median()
+        feat_df[col] = feat_df[col].fillna(0.0 if np.isnan(gmed) else gmed)
+
+    covered = int((~np.isnan(su_vals)).sum())
+    print(f"[Steering] coverage: {covered:,}/{n:,} rows ({covered/n*100:.1f}%)")
+    return feat_df
 
 
 # =====================================================================

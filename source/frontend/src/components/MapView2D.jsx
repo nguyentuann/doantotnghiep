@@ -1,10 +1,38 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo } from 'react'
 import { MapContainer, TileLayer, Polyline, CircleMarker, Tooltip, useMap } from 'react-leaflet'
 import { useLocale } from '../i18n/LocaleContext'
+import { useTheme } from '../theme/ThemeContext'
+import { interpolatePredicted6h } from '../utils/trackUtils'
 import 'leaflet/dist/leaflet.css'
+
+const TILES = {
+  dark:  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+}
 
 const SCS_CENTER = [15, 114]
 const SCS_ZOOM = 5
+
+function bearingDeg(lat1, lon1, lat2, lon2) {
+  const toR = d => d * Math.PI / 180
+  const dLon = toR(lon2 - lon1)
+  const y = Math.sin(dLon) * Math.cos(toR(lat2))
+  const x = Math.cos(toR(lat1)) * Math.sin(toR(lat2)) - Math.sin(toR(lat1)) * Math.cos(toR(lat2)) * Math.cos(dLon)
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360
+}
+
+function compassDir(deg) {
+  const dirs = ['Bắc','Đông Bắc','Đông','Đông Nam','Nam','Tây Nam','Tây','Tây Bắc']
+  return dirs[Math.round(deg / 45) % 8]
+}
+
+function withDirection(points) {
+  return points.map((p, i) => {
+    if (i === 0) return { ...p, direction: null }
+    const prev = points[i - 1]
+    return { ...p, direction: bearingDeg(prev.lat, prev.lon, p.lat, p.lon) }
+  })
+}
 
 function intensityColor(vmax) {
   if (!vmax || vmax < 34) return '#94a3b8'
@@ -35,12 +63,12 @@ function ActualTrackLayer({ track }) {
   const { t } = useLocale()
   if (!track || track.length < 2) return null
 
-  // Build colored segments — each segment gets color of its ending point
+  const pts = withDirection(track)
   const segments = []
-  for (let i = 1; i < track.length; i++) {
+  for (let i = 1; i < pts.length; i++) {
     segments.push({
-      positions: [[track[i - 1].lat, track[i - 1].lon], [track[i].lat, track[i].lon]],
-      color: intensityColor(track[i].vmax),
+      positions: [[pts[i-1].lat, pts[i-1].lon], [pts[i].lat, pts[i].lon]],
+      color: intensityColor(pts[i].vmax),
     })
   }
 
@@ -49,23 +77,19 @@ function ActualTrackLayer({ track }) {
       {segments.map((seg, i) => (
         <Polyline key={`seg-${i}`} positions={seg.positions} color={seg.color} weight={3} opacity={0.85} />
       ))}
-      {track.map((pt, i) => (
+      {pts.map((pt, i) => (
         <CircleMarker
           key={`pt-${i}`}
           center={[pt.lat, pt.lon]}
           radius={4}
-          pathOptions={{
-            fillColor: intensityColor(pt.vmax),
-            color: '#fff',
-            weight: 1.5,
-            fillOpacity: 0.9,
-          }}
+          pathOptions={{ fillColor: intensityColor(pt.vmax), color: '#fff', weight: 1.5, fillOpacity: 0.9 }}
         >
           <Tooltip>
-            <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-              <b style={{ color: '#e94560' }}>{pt.time}</b><br />
-              {pt.lat.toFixed(1)}°N &nbsp; {pt.lon.toFixed(1)}°E<br />
-              {t.tooltip.wind} <b>{pt.vmax ?? '--'} kt</b> &nbsp;|&nbsp; {t.tooltip.pres} <b>{pt.pmin ?? '--'} hPa</b>
+            <div style={{ fontSize: 12, lineHeight: 1.7 }}>
+              <b style={{ color: '#e94560' }}>📍 {pt.time ?? pt.iso_time}</b><br />
+              {pt.lat.toFixed(2)}°N &nbsp; {pt.lon.toFixed(2)}°E<br />
+              {t.tooltip.wind} <b>{pt.vmax ?? '--'} kt</b> &nbsp;|&nbsp; {t.tooltip.pres} <b>{pt.pmin ?? '--'} hPa</b><br />
+              {pt.direction != null && <>↗ {compassDir(pt.direction)} ({Math.round(pt.direction)}°)</>}
             </div>
           </Tooltip>
         </CircleMarker>
@@ -74,42 +98,46 @@ function ActualTrackLayer({ track }) {
   )
 }
 
-/** Predicted track: dashed orange polyline + markers */
+/** Predicted track: dashed orange polyline + markers with tooltips.
+ *  predictedTrack đã được interpolate 6h, isAIPoint=true tại mỗi 24h thực. */
 function PredictedTrackLayer({ predictedTrack, cutoffPoint }) {
   if (!predictedTrack || predictedTrack.length < 1) return null
 
   const allPoints = cutoffPoint ? [cutoffPoint, ...predictedTrack] : predictedTrack
   const positions = allPoints.map(p => [p.lat, p.lon])
+  const pts       = withDirection(allPoints)
 
   return (
     <>
-      <Polyline
-        positions={positions}
-        color="#f59e0b"
-        weight={3}
-        dashArray="10 6"
-        opacity={0.9}
-      />
-      {predictedTrack.map((pt, i) => (
-        <CircleMarker
-          key={`pred-${i}`}
-          center={[pt.lat, pt.lon]}
-          radius={5}
-          pathOptions={{
-            fillColor: '#f59e0b',
-            color: '#f59e0b',
-            weight: 1.5,
-            fillOpacity: 0.35,
-          }}
-        >
-          <Tooltip>
-            <div style={{ fontSize: 12 }}>
-              <b style={{ color: '#f59e0b' }}>+{(i + 1) * 24}h forecast</b><br />
-              {pt.lat.toFixed(1)}°N &nbsp; {pt.lon.toFixed(1)}°E
-            </div>
-          </Tooltip>
-        </CircleMarker>
-      ))}
+      <Polyline positions={positions} color="#f59e0b" weight={2.5} dashArray="8 5" opacity={0.9} />
+      {pts.slice(1).map((pt, i) => {
+        const isAI  = pt.isAIPoint === true
+        const aiIdx = Math.floor(i / 4) + 1
+        return (
+          <CircleMarker
+            key={`pred-${i}`}
+            center={[pt.lat, pt.lon]}
+            radius={isAI ? 6 : 3}
+            pathOptions={{
+              fillColor: '#f59e0b',
+              color: isAI ? '#fff' : '#f59e0b',
+              weight: isAI ? 2 : 0.5,
+              fillOpacity: isAI ? 0.95 : 0.5,
+            }}
+          >
+            {isAI && (
+              <Tooltip>
+                <div style={{ fontSize: 12, lineHeight: 1.7 }}>
+                  <b style={{ color: '#f59e0b' }}>🔮 +{aiIdx * 24}h AI</b><br />
+                  {pt.iso_time ?? ''}<br />
+                  {pt.lat.toFixed(2)}°N &nbsp; {pt.lon.toFixed(2)}°E<br />
+                  {pt.direction != null && <>↗ {compassDir(pt.direction)} ({Math.round(pt.direction)}°)</>}
+                </div>
+              </Tooltip>
+            )}
+          </CircleMarker>
+        )
+      })}
     </>
   )
 }
@@ -137,11 +165,39 @@ function ScsEntryMarker({ point }) {
   )
 }
 
-export default function MapView2D({ selectedStorm, showActual = true, showPredicted = true }) {
-  const cutoff = selectedStorm?.cutoff_index ?? selectedStorm?.track?.length ?? 0
-  const cutoffPoint = selectedStorm?.track?.[cutoff - 1] ?? selectedStorm?.track?.at(-1) ?? null
+// Cắt track tại điểm đổ bộ (lon < 108.5°E — bờ đông VN/Hải Nam)
+function sliceAtLandfall(points) {
+  const idx = points.findIndex((p, i) => i > 0 && p.lon < 108.5)
+  return idx === -1 ? points : points.slice(0, idx + 1)  // +1 để hiện điểm đổ bộ
+}
+
+export default function MapView2D({ selectedStorm, showActual = true, showPredicted = true, animStep = null }) {
+  const { theme } = useTheme()
+  const cutoff        = selectedStorm?.cutoff_index ?? selectedStorm?.track?.length ?? 0
+  const cutoffPoint   = selectedStorm?.track?.[cutoff - 1] ?? selectedStorm?.track?.at(-1) ?? null
   const scsEntryPoint = selectedStorm?.track?.[cutoff] ?? null
-  const predictedTrack = selectedStorm?.predicted_track ?? []
+
+  const fullActual   = selectedStorm?.track ?? []
+  const rawPredicted = selectedStorm?.predicted_track ?? []
+
+  // Interpolate predicted 24h → 6h, cắt tại bờ VN
+  const full6hPredicted = useMemo(() => {
+    const interp = interpolatePredicted6h(sliceAtLandfall(rawPredicted), cutoffPoint)
+    return interp
+  }, [rawPredicted, cutoffPoint])
+
+  // Filter theo animStep
+  const actualTrack = useMemo(() => {
+    if (animStep === null) return fullActual
+    return fullActual.slice(0, animStep + 1)
+  }, [fullActual, animStep])
+
+  const predictedTrack = useMemo(() => {
+    if (animStep === null) return full6hPredicted
+    const predStart = animStep - fullActual.length + 1
+    if (predStart <= 0) return []
+    return full6hPredicted.slice(0, predStart)
+  }, [full6hPredicted, fullActual.length, animStep])
 
   return (
     <MapContainer
@@ -151,7 +207,7 @@ export default function MapView2D({ selectedStorm, showActual = true, showPredic
       zoomControl={true}
     >
       <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        url={TILES[theme]}
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
       />
 
@@ -159,7 +215,7 @@ export default function MapView2D({ selectedStorm, showActual = true, showPredic
 
       {selectedStorm && showActual && (
         <>
-          <ActualTrackLayer track={selectedStorm.track} />
+          <ActualTrackLayer track={actualTrack} />
           <ScsEntryMarker point={scsEntryPoint} />
         </>
       )}

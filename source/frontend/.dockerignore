@@ -1,0 +1,10 @@
+# Build context = frontend/
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+*.log
+.env.local
+.DS_Store
+Dockerfile
+.dockerignore

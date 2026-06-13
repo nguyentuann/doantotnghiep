@@ -163,13 +163,23 @@ def split_and_scale_wp(X, y, meta, config, tag: str = TAG):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="G2/G3 WP-full pipeline")
-    parser.add_argument("--tag",        default="wp_full",
-                        help="Tag output (default: wp_full). Ví dụ: wp_1945")
+    parser.add_argument("--tag",        default=None,
+                        help="Tag output (default: wp_full hoặc wp_steering nếu --steering). "
+                             "Ví dụ: wp_1945")
     parser.add_argument("--year-start", type=int, default=None,
-                        help="Override year_start trong config (ví dụ: 1945). "
-                             "Mặc định dùng giá trị trong config.yaml.")
+                        help="Override year_start trong config (ví dụ: 1945).")
+    parser.add_argument("--steering",   action="store_true",
+                        help="Thêm steering_u và steering_v từ ERA5 (14 features). "
+                             "Tag mặc định: wp_steering.")
     args = parser.parse_args()
-    tag  = args.tag
+
+    # Tag mặc định phụ thuộc vào --steering
+    if args.tag is not None:
+        tag = args.tag
+    elif args.steering:
+        tag = "wp_steering"
+    else:
+        tag = "wp_full"
 
     cfg      = load_config()
     base_dir = Path(__file__).parent.parent.parent
@@ -203,7 +213,7 @@ if __name__ == "__main__":
     print(f"[G1-WP] SCS storm SIDs: {len(scs_storm_sids):,}")
 
     # --- G2: Tính features ---
-    feat_names = cfg["features"]["names"]
+    feat_names = list(cfg["features"]["names"])
     if "wind_shear" in feat_names or "sst_actual" in feat_names:
         raise ValueError(
             "features_wp.py không hỗ trợ ERA5/SST. "
@@ -211,6 +221,16 @@ if __name__ == "__main__":
         )
     print("[G2-WP] Bỏ qua ERA5/SST — không có trong feature list")
     feat_df = build_features(df_wp, cfg)
+
+    # --- Steering flow (tuỳ chọn) ---
+    if args.steering:
+        from src.g2_g3_features.era5_extractor import extract_steering_features
+        print("[G2-WP] Trích xuất steering flow từ ERA5 (±5°)...")
+        feat_df = extract_steering_features(feat_df, cfg, radius_deg=5.0)
+        feat_names = feat_names + ["steering_u", "steering_v"]
+        cfg["features"]["names"]     = feat_names
+        cfg["features"]["n_features"] = len(feat_names)
+        print(f"[G2-WP] Feature list ({len(feat_names)}): {feat_names}")
 
     # Lưu feature_matrix_{tag}.csv
     feat_stem = Path(cfg["data"]["feature_file"])
