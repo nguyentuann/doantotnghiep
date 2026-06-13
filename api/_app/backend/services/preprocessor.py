@@ -58,7 +58,7 @@ class _ScalerShim:
         return np.asarray(X, dtype=np.float64) * self.scale_ + self.mean_
 
 # Priority: scs_v12_lb6 (BEST) → scs_v11_lb6 → scs_v9_lb6 → ...
-_BASE = Path(__file__).parent.parent.parent / "model_ai/models"
+_BASE = Path(__file__).parent.parent / "model_ai/models"
 _SCALER_CANDIDATES = [
     _BASE / "scaler_scs_v12_lb6.pkl",   # 31 feat, BEST (42.0% skill)
     _BASE / "scaler_scs_v11_lb6.pkl",   # 29 feat (41.1%)
@@ -90,7 +90,7 @@ _scaler = None
 _n_features = None
 
 # ── ENSO / ONI lookup ────────────────────────────────────────────────────────
-_ONI_PATH = Path(__file__).parent.parent.parent / "model_ai/data/climate/oni.csv"
+_ONI_PATH = Path(__file__).parent.parent / "model_ai/data/climate/oni.csv"
 _oni_lookup: dict | None = None   # (year, month) → float
 
 
