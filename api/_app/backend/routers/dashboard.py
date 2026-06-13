@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-_BASE = Path(__file__).parent.parent.parent / "model_ai"
+_BASE = Path(__file__).parent.parent / "model_ai"
 _LOG = _BASE / "results/results_log.json"
 _FIG = _BASE / "results/figures"
 
