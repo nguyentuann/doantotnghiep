@@ -49,12 +49,17 @@ vercel --prod     # production
 - **Python runtime**: Vercel mặc định 3.12 (đủ cho onnxruntime/sklearn). Không cần chỉnh.
 - **Đồng bộ code**: `api/_app/backend` là BẢN SAO của `source/backend`. Khi sửa backend gốc, nhớ copy lại (hoặc chạy lại bước bundle).
 
-## Khi cần cập nhật bundle (nếu sửa backend / đổi model)
+## ⚠️ Tối ưu cho giới hạn 500 MB của Vercel
+Bundle `api/_app/backend` đã được **patch riêng cho Vercel** để bỏ `scikit-learn`,
+`scipy` và `pandas` (tổng ~400 MB) — nếu giữ thì bundle 596 MB > giới hạn 500 MB:
+- Scaler nạp từ `scaler_scs_v12_lb6.npz` (numpy) thay vì `.pkl` (sklearn) — xem `_ScalerShim` trong `preprocessor.py`.
+- Mọi `pd.Timestamp` → `datetime` (stdlib) trong `preprocessor.py` & `predictor.py`.
+- `requirements.txt` chỉ còn: fastapi, onnxruntime, numpy, pydantic, python-multipart.
+
+→ **KHÔNG copy đè** `api/_app/backend/services/{preprocessor,predictor}.py` từ `source/backend`
+(sẽ kéo lại pandas/sklearn → vỡ giới hạn). Chỉ copy router/schemas/data nếu cần.
+
+Tạo lại npz khi đổi model:
 ```bash
-# copy lại code backend
-cp -r source/backend/{routers,services,schemas} api/_app/backend/
-cp source/backend/data/historical_tracks.json   api/_app/backend/data/
-# copy lại artifact (model + scaler + data dashboard)
-cp source/model_ai/models/final/model_best_scs_v12_lb6_s42.onnx*  api/_app/model_ai/models/final/
-cp source/model_ai/models/scaler_scs_v12_lb6.pkl                  api/_app/model_ai/models/
+python -c "import pickle,numpy as np; s=pickle.load(open('source/model_ai/models/scaler_scs_v12_lb6.pkl','rb')); np.savez('api/_app/model_ai/models/scaler_scs_v12_lb6.npz', mean=s.mean_, scale=s.scale_, n_features=np.array(int(s.n_features_in_)))"
 ```

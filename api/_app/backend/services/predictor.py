@@ -107,7 +107,7 @@ def rolling_predict(track: list[dict], cutoff_index: int, max_steps: int = 40) -
     cutoff_index : index điểm đầu tiên trong SCS
     max_steps    : giữ để tương thích API, sprint1 luôn trả về 8 bước (48h)
     """
-    import pandas as pd
+    from datetime import datetime, timedelta
     from services.preprocessor import prepare_input, decode_output, _load_scaler
 
     _load_session()
@@ -121,9 +121,10 @@ def rolling_predict(track: list[dict], cutoff_index: int, max_steps: int = 40) -
     last_vmax = current[-1].get("vmax") or 35.0
     last_pmin = current[-1].get("pmin") or 1000.0
     try:
-        last_time = pd.Timestamp(current[-1].get("iso_time") or "2021-01-01T00:00:00")
+        last_time = datetime.fromisoformat(
+            str(current[-1].get("iso_time") or "2021-01-01T00:00:00").replace("Z", "").replace("z", ""))
     except Exception:
-        last_time = pd.Timestamp("2021-01-01")
+        last_time = datetime(2021, 1, 1)
 
     predicted = []
 
@@ -141,7 +142,7 @@ def rolling_predict(track: list[dict], cutoff_index: int, max_steps: int = 40) -
         for step in range(8):  # 8 bước × 6h = 48h
             lat_pred = float(coords[step * 2])
             lon_pred = float(coords[step * 2 + 1])
-            t_pred   = last_time + pd.Timedelta(hours=6 * (step + 1))
+            t_pred   = last_time + timedelta(hours=6 * (step + 1))
             predicted.append({
                 "lat":      round(lat_pred, 4),
                 "lon":      round(lon_pred, 4),
@@ -174,7 +175,7 @@ def rolling_predict(track: list[dict], cutoff_index: int, max_steps: int = 40) -
             lon0 = current[-1]["lon"]
             for step in range(1, 5):
                 frac = step / 4
-                interp_time = last_time + pd.Timedelta(hours=6 * step)
+                interp_time = last_time + timedelta(hours=6 * step)
                 current.append({
                     "lat":      lat0 + frac * (lat_24h - lat0),
                     "lon":      lon0 + frac * (lon_24h - lon0),
@@ -183,7 +184,7 @@ def rolling_predict(track: list[dict], cutoff_index: int, max_steps: int = 40) -
                     "pmin":     last_pmin,
                 })
 
-            last_time = last_time + pd.Timedelta(hours=24)
+            last_time = last_time + timedelta(hours=24)
             predicted.append({
                 "lat":      round(lat_24h, 4),
                 "lon":      round(lon_24h, 4),
