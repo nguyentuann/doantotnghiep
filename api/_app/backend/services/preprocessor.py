@@ -27,6 +27,35 @@ import math
 import pickle
 import numpy as np
 from pathlib import Path
+from datetime import datetime
+
+
+def _parse_dt(iso_time):
+    """Parse iso_time -> datetime (stdlib, thay cho pandas). Fallback 2021-09."""
+    if iso_time:
+        try:
+            return datetime.fromisoformat(str(iso_time).replace("Z", "").replace("z", ""))
+        except Exception:
+            pass
+    return datetime(2021, 9, 1)
+
+
+def _month_of(iso_time) -> int:
+    return _parse_dt(iso_time).month if iso_time else 9
+
+
+class _ScalerShim:
+    """Thay StandardScaler của sklearn — chỉ cần mean/scale/transform (numpy)."""
+    def __init__(self, mean, scale, n):
+        self.mean_ = np.asarray(mean, dtype=np.float64)
+        self.scale_ = np.asarray(scale, dtype=np.float64)
+        self.n_features_in_ = int(n)
+
+    def transform(self, X):
+        return (np.asarray(X, dtype=np.float64) - self.mean_) / self.scale_
+
+    def inverse_transform(self, X):
+        return np.asarray(X, dtype=np.float64) * self.scale_ + self.mean_
 
 # Priority: scs_v12_lb6 (BEST) → scs_v11_lb6 → scs_v9_lb6 → ...
 _BASE = Path(__file__).parent.parent.parent / "model_ai/models"
@@ -114,10 +143,17 @@ def _load_scaler():
     global _scaler, _n_features, _SCALER_PATH
     if _scaler is not None:
         return _scaler
-    if not _SCALER_PATH.exists():
-        raise FileNotFoundError(f"Scaler không tồn tại: {_SCALER_PATH}")
-    with open(_SCALER_PATH, "rb") as f:
-        _scaler = pickle.load(f)
+    # Ưu tiên .npz (numpy, không cần sklearn). Fallback .pkl nếu có sklearn.
+    npz = _SCALER_PATH.with_suffix(".npz")
+    if npz.exists():
+        d = np.load(npz)
+        _scaler = _ScalerShim(d["mean"], d["scale"], int(d["n_features"]))
+        _SCALER_PATH = npz
+    else:
+        if not _SCALER_PATH.exists():
+            raise FileNotFoundError(f"Scaler không tồn tại: {_SCALER_PATH}")
+        with open(_SCALER_PATH, "rb") as f:
+            _scaler = pickle.load(f)
     _n_features = _scaler.n_features_in_
     print(f"[preprocessor] Scaler: {_SCALER_PATH.name} ({_n_features} features)")
     return _scaler
@@ -295,8 +331,7 @@ class _ERA5MultiLevelExtractor:
         - Fallback: training means (12), asteer fallback từ scaler hoặc constant
         """
         try:
-            import pandas as pd
-            ts = pd.Timestamp(iso_time)
+            ts = _parse_dt(iso_time)
             if not self._load_year(ts.year):
                 return (_era5_climatology_fallback()
                         + _asteer_climatology_fallback()
@@ -400,13 +435,12 @@ _era5_extractor = _ERA5MultiLevelExtractor()
 
 def _build_base_row(pt, prev, storm_age_h):
     """Tính 13 features chung (lat_norm..dist2land) trả về tuple."""
-    import pandas as pd
     lat, lon = pt["lat"], pt["lon"]
     vmax      = pt.get("vmax") or 35.0
     pmin      = pt.get("pmin") or 1000.0
     dist2land = pt.get("dist2land") or _DIST2LAND_DEFAULT
     iso_time  = pt.get("iso_time")
-    month     = pd.Timestamp(iso_time).month if iso_time else 9
+    month     = _month_of(iso_time)
 
     lat_norm = (lat - _LAT_MIN) / (_LAT_MAX - _LAT_MIN)
     lon_norm = (lon - _LON_MIN) / (_LON_MAX - _LON_MIN)
@@ -487,9 +521,8 @@ def _build_row_legacy(pt, prev, storm_age_h):
     pmin = pt.get("pmin") or 1000.0
     dist2land = pt.get("dist2land") or _DIST2LAND_DEFAULT
 
-    import pandas as pd
     iso_time = pt.get("iso_time")
-    month = pd.Timestamp(iso_time).month if iso_time else 9
+    month = _month_of(iso_time)
 
     lat_norm = (lat - _LAT_MIN) / (_LAT_MAX - _LAT_MIN)
     lon_norm = (lon - _LON_MIN) / (_LON_MAX - _LON_MIN)
@@ -566,9 +599,8 @@ def prepare_input(points: list[dict], lookback: int = 8) -> np.ndarray:
             else:
                 row = _build_row_sprint1(pt, prev, storm_age_h, era5_feats[i])
             if n_feat == 20:
-                import pandas as pd
                 iso_time = pt.get("iso_time")
-                ts = pd.Timestamp(iso_time) if iso_time else None
+                ts = _parse_dt(iso_time) if iso_time else None
                 oni = _get_oni(ts.year, ts.month) if ts else 0.0
                 row.append(oni)
             rows.append(row)
