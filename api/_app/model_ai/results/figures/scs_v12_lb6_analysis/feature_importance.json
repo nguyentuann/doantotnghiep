@@ -1,0 +1,291 @@
+{
+  "tag": "scs_v12_lb6",
+  "model": "transformer",
+  "n_repeats": 10,
+  "baseline_mae_24h": 101.3,
+  "per_feature": [
+    {
+      "feature": "lon_norm",
+      "index": 1,
+      "mae_increase": 319.82,
+      "mae_std": 10.47
+    },
+    {
+      "feature": "lat_norm",
+      "index": 0,
+      "mae_increase": 305.29,
+      "mae_std": 15.72
+    },
+    {
+      "feature": "asteer_u",
+      "index": 27,
+      "mae_increase": 59.51,
+      "mae_std": 4.47
+    },
+    {
+      "feature": "dlon",
+      "index": 3,
+      "mae_increase": 57.33,
+      "mae_std": 2.53
+    },
+    {
+      "feature": "asteer_v",
+      "index": 28,
+      "mae_increase": 27.37,
+      "mae_std": 1.63
+    },
+    {
+      "feature": "dlat",
+      "index": 2,
+      "mae_increase": 26.53,
+      "mae_std": 2.69
+    },
+    {
+      "feature": "v850",
+      "index": 22,
+      "mae_increase": 16.33,
+      "mae_std": 1.03
+    },
+    {
+      "feature": "v500",
+      "index": 15,
+      "mae_increase": 8.81,
+      "mae_std": 1.0
+    },
+    {
+      "feature": "speed_kmh",
+      "index": 4,
+      "mae_increase": 8.43,
+      "mae_std": 1.42
+    },
+    {
+      "feature": "u500",
+      "index": 14,
+      "mae_increase": 7.47,
+      "mae_std": 1.36
+    },
+    {
+      "feature": "u700",
+      "index": 16,
+      "mae_increase": 7.22,
+      "mae_std": 1.03
+    },
+    {
+      "feature": "vmax",
+      "index": 6,
+      "mae_increase": 7.19,
+      "mae_std": 1.26
+    },
+    {
+      "feature": "u200",
+      "index": 19,
+      "mae_increase": 6.46,
+      "mae_std": 0.95
+    },
+    {
+      "feature": "v200",
+      "index": 20,
+      "mae_increase": 6.44,
+      "mae_std": 0.98
+    },
+    {
+      "feature": "vort850",
+      "index": 24,
+      "mae_increase": 5.72,
+      "mae_std": 1.12
+    },
+    {
+      "feature": "beta_lat_drift",
+      "index": 25,
+      "mae_increase": 5.2,
+      "mae_std": 1.97
+    },
+    {
+      "feature": "asteer_u850",
+      "index": 29,
+      "mae_increase": 4.46,
+      "mae_std": 0.89
+    },
+    {
+      "feature": "asteer_v850",
+      "index": 30,
+      "mae_increase": 4.14,
+      "mae_std": 0.87
+    },
+    {
+      "feature": "vort500",
+      "index": 23,
+      "mae_increase": 3.62,
+      "mae_std": 1.02
+    },
+    {
+      "feature": "pmin",
+      "index": 7,
+      "mae_increase": 2.92,
+      "mae_std": 1.03
+    },
+    {
+      "feature": "z500",
+      "index": 18,
+      "mae_increase": 2.5,
+      "mae_std": 0.69
+    },
+    {
+      "feature": "u850",
+      "index": 21,
+      "mae_increase": 2.44,
+      "mae_std": 0.46
+    },
+    {
+      "feature": "v700",
+      "index": 17,
+      "mae_increase": 2.29,
+      "mae_std": 0.53
+    },
+    {
+      "feature": "month_cos",
+      "index": 10,
+      "mae_increase": 1.52,
+      "mae_std": 0.46
+    },
+    {
+      "feature": "storm_age_h",
+      "index": 11,
+      "mae_increase": 0.78,
+      "mae_std": 0.38
+    },
+    {
+      "feature": "wind_shear",
+      "index": 13,
+      "mae_increase": 0.55,
+      "mae_std": 0.18
+    },
+    {
+      "feature": "direction",
+      "index": 5,
+      "mae_increase": 0.46,
+      "mae_std": 0.25
+    },
+    {
+      "feature": "dist2land",
+      "index": 12,
+      "mae_increase": 0.24,
+      "mae_std": 0.13
+    },
+    {
+      "feature": "month_sin",
+      "index": 9,
+      "mae_increase": 0.13,
+      "mae_std": 0.32
+    },
+    {
+      "feature": "sst_actual",
+      "index": 8,
+      "mae_increase": 0.08,
+      "mae_std": 0.61
+    },
+    {
+      "feature": "beta_lon_drift",
+      "index": 26,
+      "mae_increase": 0.0,
+      "mae_std": 0.0
+    }
+  ],
+  "per_group": [
+    {
+      "group": "Storm-state",
+      "n_features": 13,
+      "feature_idxs": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "mae_increase": 529.51,
+      "mae_per_feat": 40.73
+    },
+    {
+      "group": "DLM Annulus",
+      "n_features": 2,
+      "feature_idxs": [
+        27,
+        28
+      ],
+      "mae_increase": 81.96,
+      "mae_per_feat": 40.98
+    },
+    {
+      "group": "Mid-level ERA5",
+      "n_features": 5,
+      "feature_idxs": [
+        14,
+        15,
+        16,
+        17,
+        18
+      ],
+      "mae_increase": 42.5,
+      "mae_per_feat": 8.5
+    },
+    {
+      "group": "Upper-low ERA5",
+      "n_features": 4,
+      "feature_idxs": [
+        19,
+        20,
+        21,
+        22
+      ],
+      "mae_increase": 26.24,
+      "mae_per_feat": 6.56
+    },
+    {
+      "group": "Beta drift",
+      "n_features": 2,
+      "feature_idxs": [
+        25,
+        26
+      ],
+      "mae_increase": 6.14,
+      "mae_per_feat": 3.07
+    },
+    {
+      "group": "Vorticity",
+      "n_features": 2,
+      "feature_idxs": [
+        23,
+        24
+      ],
+      "mae_increase": 6.05,
+      "mae_per_feat": 3.03
+    },
+    {
+      "group": "850 hPa Annulus",
+      "n_features": 2,
+      "feature_idxs": [
+        29,
+        30
+      ],
+      "mae_increase": 4.63,
+      "mae_per_feat": 2.31
+    },
+    {
+      "group": "Wind-shear",
+      "n_features": 1,
+      "feature_idxs": [
+        13
+      ],
+      "mae_increase": 0.43,
+      "mae_per_feat": 0.43
+    }
+  ]
+}

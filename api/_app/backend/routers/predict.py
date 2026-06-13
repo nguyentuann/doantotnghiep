@@ -39,7 +39,6 @@ def predict_track(req: PredictRequest):
         lat_48h, lon_48h = float(coords[14]), float(coords[15])
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi inference: {e}")
-
     origin = points[-1]
     mae_ref = _MAE_REFERENCE.get(model_name, {})
 

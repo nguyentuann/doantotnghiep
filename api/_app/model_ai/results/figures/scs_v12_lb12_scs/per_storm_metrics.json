@@ -1,0 +1,293 @@
+{
+  "tag": "scs_v12_lb12",
+  "best_model": "transformer",
+  "n_storms": 26,
+  "per_storm": [
+    {
+      "sid": "2021148N05142",
+      "season": 2021,
+      "n_sequences": 6,
+      "mae_24h": 136.55,
+      "mae_48h": 916.33,
+      "cliper_mae_24h": 438.26,
+      "cliper_mae_48h": 1332.1,
+      "skill_24h": 68.84,
+      "skill_48h": 31.21
+    },
+    {
+      "sid": "2021198N19117",
+      "season": 2021,
+      "n_sequences": 8,
+      "mae_24h": 74.47,
+      "mae_48h": 218.56,
+      "cliper_mae_24h": 79.02,
+      "cliper_mae_48h": 236.1,
+      "skill_24h": 5.75,
+      "skill_48h": 7.43
+    },
+    {
+      "sid": "2021248N11131",
+      "season": 2021,
+      "n_sequences": 12,
+      "mae_24h": 127.25,
+      "mae_48h": 241.94,
+      "cliper_mae_24h": 205.18,
+      "cliper_mae_48h": 486.12,
+      "skill_24h": 37.98,
+      "skill_48h": 50.23
+    },
+    {
+      "sid": "2021264N13119",
+      "season": 2021,
+      "n_sequences": 2,
+      "mae_24h": 168.5,
+      "mae_48h": 206.41,
+      "cliper_mae_24h": 207.71,
+      "cliper_mae_48h": 483.7,
+      "skill_24h": 18.88,
+      "skill_48h": 57.33
+    },
+    {
+      "sid": "2021276N07131",
+      "season": 2021,
+      "n_sequences": 14,
+      "mae_24h": 95.89,
+      "mae_48h": 224.85,
+      "cliper_mae_24h": 150.07,
+      "cliper_mae_48h": 396.02,
+      "skill_24h": 36.11,
+      "skill_48h": 43.22
+    },
+    {
+      "sid": "2021280N14137",
+      "season": 2021,
+      "n_sequences": 3,
+      "mae_24h": 195.33,
+      "mae_48h": 161.13,
+      "cliper_mae_24h": 113.47,
+      "cliper_mae_48h": 103.18,
+      "skill_24h": -72.14,
+      "skill_48h": -56.16
+    },
+    {
+      "sid": "2021296N06127",
+      "season": 2021,
+      "n_sequences": 2,
+      "mae_24h": 25.88,
+      "mae_48h": 114.15,
+      "cliper_mae_24h": 203.25,
+      "cliper_mae_48h": 318.25,
+      "skill_24h": 87.27,
+      "skill_48h": 64.13
+    },
+    {
+      "sid": "2021346N05145",
+      "season": 2021,
+      "n_sequences": 10,
+      "mae_24h": 154.69,
+      "mae_48h": 576.62,
+      "cliper_mae_24h": 275.06,
+      "cliper_mae_48h": 887.86,
+      "skill_24h": 43.76,
+      "skill_48h": 35.05
+    },
+    {
+      "sid": "2022180N15117",
+      "season": 2022,
+      "n_sequences": 5,
+      "mae_24h": 131.8,
+      "mae_48h": 196.06,
+      "cliper_mae_24h": 133.49,
+      "cliper_mae_48h": 454.11,
+      "skill_24h": 1.26,
+      "skill_48h": 56.83
+    },
+    {
+      "sid": "2022232N18131",
+      "season": 2022,
+      "n_sequences": 3,
+      "mae_24h": 146.12,
+      "mae_48h": 443.75,
+      "cliper_mae_24h": 75.65,
+      "cliper_mae_48h": 281.96,
+      "skill_24h": -93.16,
+      "skill_48h": -57.38
+    },
+    {
+      "sid": "2022264N17132",
+      "season": 2022,
+      "n_sequences": 7,
+      "mae_24h": 188.06,
+      "mae_48h": 209.24,
+      "cliper_mae_24h": 163.78,
+      "cliper_mae_48h": 328.33,
+      "skill_24h": -14.82,
+      "skill_48h": 36.27
+    },
+    {
+      "sid": "2022285N17140",
+      "season": 2022,
+      "n_sequences": 11,
+      "mae_24h": 113.87,
+      "mae_48h": 225.04,
+      "cliper_mae_24h": 120.01,
+      "cliper_mae_48h": 309.83,
+      "skill_24h": 5.11,
+      "skill_48h": 27.37
+    },
+    {
+      "sid": "2022299N11134",
+      "season": 2022,
+      "n_sequences": 10,
+      "mae_24h": 132.29,
+      "mae_48h": 286.29,
+      "cliper_mae_24h": 187.07,
+      "cliper_mae_48h": 373.23,
+      "skill_24h": 29.28,
+      "skill_48h": 23.3
+    },
+    {
+      "sid": "2023194N16123",
+      "season": 2023,
+      "n_sequences": 6,
+      "mae_24h": 157.25,
+      "mae_48h": 370.0,
+      "cliper_mae_24h": 104.8,
+      "cliper_mae_48h": 250.54,
+      "skill_24h": -50.05,
+      "skill_48h": -47.68
+    },
+    {
+      "sid": "2023201N13134",
+      "season": 2023,
+      "n_sequences": 4,
+      "mae_24h": 170.03,
+      "mae_48h": 591.53,
+      "cliper_mae_24h": 243.43,
+      "cliper_mae_48h": 701.13,
+      "skill_24h": 30.15,
+      "skill_48h": 15.63
+    },
+    {
+      "sid": "2023234N18128",
+      "season": 2023,
+      "n_sequences": 11,
+      "mae_24h": 74.44,
+      "mae_48h": 178.93,
+      "cliper_mae_24h": 100.46,
+      "cliper_mae_48h": 257.82,
+      "skill_24h": 25.9,
+      "skill_48h": 30.6
+    },
+    {
+      "sid": "2023271N14144",
+      "season": 2023,
+      "n_sequences": 11,
+      "mae_24h": 101.22,
+      "mae_48h": 175.28,
+      "cliper_mae_24h": 110.21,
+      "cliper_mae_48h": 274.19,
+      "skill_24h": 8.16,
+      "skill_48h": 36.08
+    },
+    {
+      "sid": "2023289N15111",
+      "season": 2023,
+      "n_sequences": 3,
+      "mae_24h": 124.04,
+      "mae_48h": 219.95,
+      "cliper_mae_24h": 219.88,
+      "cliper_mae_48h": 511.44,
+      "skill_24h": 43.59,
+      "skill_48h": 56.99
+    },
+    {
+      "sid": "2024198N08130",
+      "season": 2024,
+      "n_sequences": 19,
+      "mae_24h": 143.74,
+      "mae_48h": 225.03,
+      "cliper_mae_24h": 171.94,
+      "cliper_mae_48h": 394.09,
+      "skill_24h": 16.41,
+      "skill_48h": 42.9
+    },
+    {
+      "sid": "2024244N09137",
+      "season": 2024,
+      "n_sequences": 19,
+      "mae_24h": 72.09,
+      "mae_48h": 145.17,
+      "cliper_mae_24h": 132.78,
+      "cliper_mae_48h": 298.22,
+      "skill_24h": 45.71,
+      "skill_48h": 51.32
+    },
+    {
+      "sid": "2024259N17126",
+      "season": 2024,
+      "n_sequences": 4,
+      "mae_24h": 121.71,
+      "mae_48h": 195.91,
+      "cliper_mae_24h": 123.97,
+      "cliper_mae_48h": 350.67,
+      "skill_24h": 1.82,
+      "skill_48h": 44.13
+    },
+    {
+      "sid": "2024270N24128",
+      "season": 2024,
+      "n_sequences": 5,
+      "mae_24h": 98.36,
+      "mae_48h": 347.88,
+      "cliper_mae_24h": 154.32,
+      "cliper_mae_48h": 403.36,
+      "skill_24h": 36.26,
+      "skill_48h": 13.75
+    },
+    {
+      "sid": "2024293N13141",
+      "season": 2024,
+      "n_sequences": 13,
+      "mae_24h": 150.45,
+      "mae_48h": 517.41,
+      "cliper_mae_24h": 264.66,
+      "cliper_mae_48h": 693.47,
+      "skill_24h": 43.15,
+      "skill_48h": 25.39
+    },
+    {
+      "sid": "2024307N06143",
+      "season": 2024,
+      "n_sequences": 14,
+      "mae_24h": 150.61,
+      "mae_48h": 312.14,
+      "cliper_mae_24h": 197.93,
+      "cliper_mae_48h": 466.4,
+      "skill_24h": 23.91,
+      "skill_48h": 33.08
+    },
+    {
+      "sid": "2024312N14145",
+      "season": 2024,
+      "n_sequences": 9,
+      "mae_24h": 180.45,
+      "mae_48h": 172.61,
+      "cliper_mae_24h": 130.64,
+      "cliper_mae_48h": 353.41,
+      "skill_24h": -38.13,
+      "skill_48h": 51.16
+    },
+    {
+      "sid": "2024313N10169",
+      "season": 2024,
+      "n_sequences": 2,
+      "mae_24h": 164.9,
+      "mae_48h": 544.06,
+      "cliper_mae_24h": 255.26,
+      "cliper_mae_48h": 829.19,
+      "skill_24h": 35.4,
+      "skill_48h": 34.39
+    }
+  ]
+}

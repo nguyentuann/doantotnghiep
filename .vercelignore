@@ -1,0 +1,21 @@
+# Môi trường ảo & cache
+**/.venv/
+**/venv/
+**/__pycache__/
+**/node_modules/
+*.pyc
+
+# Dữ liệu nặng KHÔNG cần lúc chạy — artifact đã được bundle sẵn trong api/_app/
+# (bỏ nguyên các thư mục gốc; KHÔNG dùng pattern *.pkl/*.onnx toàn cục để
+#  tránh loại nhầm artifact trong api/_app/)
+source/model_ai/
+source/backend/
+source/data/
+
+# Tài liệu / không liên quan deploy
+final/
+document/
+research/
+
+# VCS
+.git/
