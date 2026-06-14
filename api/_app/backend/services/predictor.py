@@ -14,7 +14,8 @@ Rolling strategy:
 import numpy as np
 from pathlib import Path
 
-_BASE = Path(__file__).parent.parent / "model_ai/models/final"
+from _artifacts import model_ai_dir
+_BASE = model_ai_dir() / "models/final"
 
 # Priority: scs_v12_lb6 (BEST hiện tại) → scs_v11_lb6 → scs_v9_lb6 → ...
 _ONNX_CANDIDATES = [
