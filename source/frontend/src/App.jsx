@@ -23,7 +23,7 @@ export default function App() {
   const [usingMock, setUsingMock]         = useState(false)
   const [showActual, setShowActual]       = useState(true)
   const [showPredicted, setShowPredicted] = useState(true)
-  const [viewMode, setViewMode]           = useState('3d')  // '3d' | '2d'
+  const [viewMode, setViewMode]           = useState('2d')  // '3d' | '2d'
   const [mainView, setMainView]           = useState('demo') // 'demo' | 'dashboard'
   const [selectedArch, setSelectedArch]  = useState('transformer')
   const [availableArchs, setAvailableArchs] = useState(['transformer'])
