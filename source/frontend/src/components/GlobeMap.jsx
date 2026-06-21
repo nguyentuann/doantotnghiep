@@ -207,11 +207,15 @@ export default function GlobeMap({ selectedStorm, showActual = true, showPredict
 
         globeImageUrl={theme === 'dark'
           ? '//unpkg.com/three-globe/example/img/earth-night.jpg'
-          : '//unpkg.com/three-globe/example/img/earth-day.jpg'}
+          : '//unpkg.com/three-globe/example/img/earth-blue-marble.jpg'}
         bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
         backgroundImageUrl={theme === 'dark'
           ? '//unpkg.com/three-globe/example/img/night-sky.png'
           : null}
+
+        showAtmosphere
+        atmosphereColor={theme === 'dark' ? '#1a6fff' : '#4da6ff'}
+        atmosphereAltitude={theme === 'dark' ? 0.18 : 0.12}
 
         // === Track lịch sử + đường dự báo ===
         pathsData={pathsData}
