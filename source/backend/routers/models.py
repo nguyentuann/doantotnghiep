@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Dict, List
 from fastapi import APIRouter
 from schemas.response import ModelInfo
 
@@ -8,7 +9,7 @@ router = APIRouter(prefix="/models", tags=["models"])
 _LOG_PATH = Path(__file__).parent.parent.parent / "model_ai/results/results_log.json"
 
 
-@router.get("", response_model=list[ModelInfo])
+@router.get("", response_model=List[ModelInfo])
 def list_models():
     if not _LOG_PATH.exists():
         return []
@@ -23,7 +24,7 @@ def list_models():
     ]
 
     # Dedup: giữ entry MAE thấp nhất cho mỗi model
-    best: dict[str, dict] = {}
+    best: Dict[str, dict] = {}
     for e in candidates:
         name = e["model_name"].lower()
         if name not in best or e["mae_24h"] < best[name]["mae_24h"]:

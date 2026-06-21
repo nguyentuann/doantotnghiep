@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import List, Optional
 
 
 class ForecastPoint(BaseModel):
@@ -12,7 +12,7 @@ class ForecastPoint(BaseModel):
 class ForecastResponse(BaseModel):
     origin_lat: float
     origin_lon: float
-    points: list[ForecastPoint]
+    points: List[ForecastPoint]
     model_used: str
 
 
@@ -40,9 +40,9 @@ class StormDetailResponse(BaseModel):
     name: str
     season: int
     basin: str
-    track: list[StormPoint]
+    track: List[StormPoint]
     cutoff_index: int = 8
-    predicted_track: list[StormPoint] = []   # rolling prediction từ cutoff trở đi
+    predicted_track: List[StormPoint] = []   # rolling prediction từ cutoff trở đi
 
 
 class ModelInfo(BaseModel):

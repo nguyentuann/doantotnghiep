@@ -3,9 +3,21 @@
 import base64, glob, os
 
 ROOT = os.path.join(os.path.dirname(__file__), "backend", "model_ai")
-files = [
-    "models/final/model_best_scs_v12_lb6_s42.onnx",
+_ARCH_ONNX = [
+    "models/final/model_best_scs_v12_lb6_s42.onnx",        # transformer (tên cũ)
     "models/final/model_best_scs_v12_lb6_s42.onnx.data",
+    "models/final/model_best_transformer_scs_v12_lb6_s42.onnx",      # transformer (tên mới)
+    "models/final/model_best_transformer_scs_v12_lb6_s42.onnx.data",
+    "models/final/model_best_lstm_scs_v12_lb6_s42.onnx",
+    "models/final/model_best_lstm_scs_v12_lb6_s42.onnx.data",
+    "models/final/model_best_bilstm_scs_v12_lb6_s42.onnx",
+    "models/final/model_best_bilstm_scs_v12_lb6_s42.onnx.data",
+    "models/final/model_best_bigru_scs_v12_lb6_s42.onnx",
+    "models/final/model_best_bigru_scs_v12_lb6_s42.onnx.data",
+]
+# Chỉ nhúng các file thực sự tồn tại
+files = [f for f in _ARCH_ONNX if os.path.exists(os.path.join(ROOT, f))]
+files += [
     "models/scaler_scs_v12_lb6.npz",
     "models/scaler_scs_v12_lb6.pkl",
     "results/results_log.json",

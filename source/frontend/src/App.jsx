@@ -7,7 +7,7 @@ import ModelMetricsTable from './components/ModelMetricsTable'
 import StormSelector from './components/StormSelector'
 import TrackAnimator from './components/TrackAnimator'
 import ModelDashboard from './components/ModelDashboard'
-import { fetchStorms, fetchStormDetail } from './api/storms'
+import { fetchStorms, fetchStormDetail, fetchArchs } from './api/storms'
 import { MOCK_STORMS } from './api/mockData'
 import { useLocale } from './i18n/LocaleContext'
 import { useTheme } from './theme/ThemeContext'
@@ -25,6 +25,8 @@ export default function App() {
   const [showPredicted, setShowPredicted] = useState(true)
   const [viewMode, setViewMode]           = useState('3d')  // '3d' | '2d'
   const [mainView, setMainView]           = useState('demo') // 'demo' | 'dashboard'
+  const [selectedArch, setSelectedArch]  = useState('transformer')
+  const [availableArchs, setAvailableArchs] = useState(['transformer'])
   const { locale, toggle, t }             = useLocale()
   const { theme, toggle: toggleTheme }    = useTheme()
 
@@ -77,19 +79,30 @@ export default function App() {
         setUsingMock(true)
       })
       .finally(() => setLoading(false))
+    fetchArchs()
+      .then(d => {
+        setAvailableArchs(d.archs ?? ['transformer'])
+        setSelectedArch(d.default ?? 'transformer')
+      })
+      .catch(() => {})
   }, [])
 
-  async function handleSelect(stormItem) {
+  async function handleSelect(stormItem, arch = selectedArch) {
     if (!stormItem) { setSelectedStorm(null); return }
     if (usingMock) {
       setSelectedStorm(MOCK_STORMS.find(s => s.sid === stormItem.sid) ?? stormItem)
       return
     }
     setDetailLoading(true)
-    fetchStormDetail(stormItem.sid)
+    fetchStormDetail(stormItem.sid, arch)
       .then(setSelectedStorm)
       .catch(() => setSelectedStorm(stormItem))
       .finally(() => setDetailLoading(false))
+  }
+
+  function handleArchChange(arch) {
+    setSelectedArch(arch)
+    if (selectedStorm) handleSelect(selectedStorm, arch)
   }
 
   // ─── View Dashboard: layout riêng full-width ───
@@ -170,6 +183,26 @@ export default function App() {
             onSelect={handleSelect}
           />
           {detailLoading && <p style={{ color: '#aaa', fontSize: '0.8rem' }}>{t.loading}</p>}
+        </div>
+
+        <div className="sidebar-section">
+          <label>Mô hình dự báo</label>
+          <div className="arch-selector">
+            {['transformer', 'lstm', 'bilstm', 'bigru'].map(arch => {
+              const ready = availableArchs.includes(arch)
+              return (
+                <button
+                  key={arch}
+                  className={`arch-btn${selectedArch === arch ? ' arch-btn-active' : ''}${!ready ? ' arch-btn-disabled' : ''}`}
+                  onClick={() => ready && handleArchChange(arch)}
+                  title={ready ? arch.toUpperCase() : `Chưa có ONNX cho ${arch}`}
+                >
+                  {arch === 'transformer' ? 'Transformer' : arch === 'bilstm' ? 'BiLSTM' : arch === 'bigru' ? 'BiGRU' : 'LSTM'}
+                  {!ready && ' 🔒'}
+                </button>
+              )
+            })}
+          </div>
         </div>
 
         {selectedStorm && (

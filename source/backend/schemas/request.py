@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import List, Optional
 
 
 class TrackPoint(BaseModel):
@@ -11,7 +11,7 @@ class TrackPoint(BaseModel):
 
 
 class PredictRequest(BaseModel):
-    track: list[TrackPoint] = Field(
+    track: List[TrackPoint] = Field(
         ...,
         min_length=8,
         description="Tối thiểu 8 điểm (48h lịch sử, mỗi bước 6h)"

@@ -23,14 +23,22 @@ export async function fetchStorms() {
   return res.data
 }
 
-// GET /api/storms/:sid → full storm với track + predicted_track
-export async function fetchStormDetail(sid) {
-  const res = await api.get(`/storms/${sid}`)
+// GET /api/storms/archs → danh sách arch có ONNX
+export async function fetchArchs() {
+  const res = await api.get('/storms/archs')
+  return res.data  // { archs: [...], default: '...' }
+}
+
+// GET /api/storms/:sid?model=xxx → full storm với track + predicted_track
+export async function fetchStormDetail(sid, model = null) {
+  const params = model ? { model } : {}
+  const res = await api.get(`/storms/${sid}`, { params })
   const s   = res.data
   return {
     ...s,
     track:           normalizeTrack(s.track),
     predicted_track: normalizeTrack(s.predicted_track ?? []),
+    arch_used:       model ?? 'transformer',
   }
 }
 

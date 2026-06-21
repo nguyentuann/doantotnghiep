@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from schemas.response import StormListItem, StormDetailResponse
-from services.predictor import rolling_predict, is_ready
+from services.predictor import rolling_predict, is_ready, available_archs, DEFAULT_ARCH
 
 router = APIRouter(prefix="/storms", tags=["storms"])
 
@@ -31,19 +31,25 @@ def list_storms():
     ]
 
 
+@router.get("/archs")
+def list_archs():
+    return {"archs": available_archs(), "default": DEFAULT_ARCH}
+
+
 @router.get("/{sid}", response_model=StormDetailResponse)
-def get_storm(sid: str):
+def get_storm(sid: str, model: str | None = Query(None)):
     storms = _load()
     storm = next((s for s in storms if s["sid"] == sid), None)
     if storm is None:
         raise HTTPException(status_code=404, detail=f"Không tìm thấy storm: {sid}")
 
+    arch = model if model in ("transformer", "lstm", "bilstm", "bigru") else DEFAULT_ARCH
     cutoff = storm.get("cutoff_index", 8)
     predicted_track = []
 
-    if is_ready() and len(storm["track"]) > cutoff:
+    if is_ready(arch) and len(storm["track"]) > cutoff:
         try:
-            predicted_track = rolling_predict(storm["track"], cutoff)
+            predicted_track = rolling_predict(storm["track"], cutoff, arch=arch)
         except Exception:
             predicted_track = []
 

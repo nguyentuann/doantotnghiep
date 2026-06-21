@@ -314,6 +314,38 @@ html, body, #root {
   color: #bfdbfe;
 }
 
+/* ── Arch selector ── */
+.arch-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-top: 4px;
+}
+.arch-btn {
+  padding: 5px 4px;
+  font-size: 0.72rem;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  text-align: center;
+}
+.arch-btn:hover:not(.arch-btn-disabled) {
+  background: var(--border);
+}
+.arch-btn-active {
+  background: #1d4ed8 !important;
+  border-color: #3b82f6 !important;
+  color: #fff !important;
+  font-weight: 600;
+}
+.arch-btn-disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
 /* ── Header ── */
 .header-top {
   display: flex;
