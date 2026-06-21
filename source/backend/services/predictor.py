@@ -16,84 +16,97 @@ from pathlib import Path
 
 _BASE = Path(__file__).parent.parent.parent / "model_ai/models/final"
 
-# Priority: scs_v12_lb6 (BEST hiện tại) → scs_v11_lb6 → scs_v9_lb6 → ...
-_ONNX_CANDIDATES = [
-    _BASE / "model_best_scs_v12_lb6.onnx",          # 31 feat, lookback=6, 42.0% skill
-    _BASE / "model_best_scs_v12_lb6_s42.onnx",      # single seed fallback
-    _BASE / "model_best_scs_v11_lb6.onnx",          # 29 feat, lookback=6, 41.1%
-    _BASE / "model_best_scs_v11_lb6_s42.onnx",      # single seed fallback
-    _BASE / "model_best_scs_v9_lb6.onnx",           # 27 feat, lookback=6, 36.4%
-    _BASE / "model_best_scs_v9.onnx",               # 27 feat, lookback=8, 34.5%
-    _BASE / "model_best_scs_v7.onnx",               # 25 feat, lookback=8, 33.9%
-    _BASE / "model_best_wp_6h_v7.onnx",
-    _BASE / "model_best_wp_6h_v6.onnx",
-    _BASE / "model_best_wp_6h_v5.onnx",
-    _BASE / "model_best_wp_6h_ext.onnx",
-    _BASE / "model_best_wp_6h_enso.onnx",
-    _BASE / "model_best_wp_6h_v3.onnx",
-    _BASE / "model_best_wp_6h_v2.onnx",
-    _BASE / "model_best_wp_6h.onnx",
-    _BASE / "model_best_sprint1_6h.onnx",
-    _BASE / "model_best_sprint1.onnx",
-    _BASE / "model_best_14feat.onnx",
-    _BASE / "model_best_wp_full.onnx",
-    _BASE / "model_best.onnx",
-]
-_ONNX_PATH = next((p for p in _ONNX_CANDIDATES if p.exists()), _ONNX_CANDIDATES[-1])
+# Candidates theo từng kiến trúc — ưu tiên scs_v12_lb6 (champion, 31 feat, lookback=6)
+_ARCH_CANDIDATES = {
+    "transformer": [
+        _BASE / "model_best_transformer_scs_v12_lb6_s42.onnx",
+        _BASE / "model_best_scs_v12_lb6_s42.onnx",       # tên cũ (backward compat)
+        _BASE / "model_best_scs_v11_lb6_s42.onnx",
+        _BASE / "model_best_scs_v7.onnx",
+        _BASE / "model_best.onnx",
+    ],
+    "lstm": [
+        _BASE / "model_best_lstm_scs_v12_lb6_s42.onnx",
+        _BASE / "model_best_lstm_scs_v11_lb6_s42.onnx",
+        _BASE / "model_best_lstm_scs_v9_lb6_s42.onnx",
+    ],
+    "bilstm": [
+        _BASE / "model_best_bilstm_scs_v12_lb6_s42.onnx",
+        _BASE / "model_best_bilstm_scs_v11_lb6_s42.onnx",
+        _BASE / "model_best_bilstm_scs_v9_lb6_s42.onnx",
+    ],
+    "bigru": [
+        _BASE / "model_best_bigru_scs_v12_lb6_s42.onnx",
+        _BASE / "model_best_bigru_scs_v11_lb6_s42.onnx",
+        _BASE / "model_best_bigru_scs_v9_lb6_s42.onnx",
+    ],
+}
+DEFAULT_ARCH = "transformer"
 
-_session = None
-_input_name = None
-_output_name = None
-_n_outputs = None   # 16 (sprint1) or 4 (legacy)
-_lookback = 8       # auto-detected from ONNX input shape
+# Cache sessions theo arch name
+_sessions: dict = {}   # arch → {"session", "input_name", "output_name", "n_outputs", "lookback"}
 
 
-def _load_session():
-    global _session, _input_name, _output_name, _n_outputs, _lookback
-    if _session is not None:
-        return
+def _find_onnx(arch: str):
+    candidates = _ARCH_CANDIDATES.get(arch, [])
+    found = next((p for p in candidates if p.exists()), None)
+    if found is None:
+        raise FileNotFoundError(
+            f"Không tìm thấy ONNX cho arch='{arch}'. "
+            f"Chạy: python -m src.g8_export.export_onnx --tag scs_v12_lb6 --model {arch} --seed 42"
+        )
+    return found
+
+
+def _load_session(arch: str = DEFAULT_ARCH):
+    if arch in _sessions:
+        return _sessions[arch]
 
     try:
         import onnxruntime as ort
     except ImportError:
         raise RuntimeError("onnxruntime chưa cài. Chạy: pip install onnxruntime")
 
-    if not _ONNX_PATH.exists():
-        raise FileNotFoundError(f"ONNX model không tồn tại: {_ONNX_PATH}")
+    onnx_path = _find_onnx(arch)
+    sess      = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    input_shape = sess.get_inputs()[0].shape
+    lookback    = int(input_shape[1]) if len(input_shape) >= 2 and isinstance(input_shape[1], int) else 8
+    n_outputs   = sess.get_outputs()[0].shape[1]
+    print(f"[predictor] ONNX loaded ({arch}): {onnx_path.name} (output={n_outputs}, lookback={lookback})")
 
-    _session     = ort.InferenceSession(str(_ONNX_PATH), providers=["CPUExecutionProvider"])
-    _input_name  = _session.get_inputs()[0].name
-    _output_name = _session.get_outputs()[0].name
-    _n_outputs   = _session.get_outputs()[0].shape[1]
-    # Auto-detect lookback từ input shape (batch, lookback, n_features)
-    input_shape = _session.get_inputs()[0].shape
-    _lookback   = int(input_shape[1]) if len(input_shape) >= 2 and isinstance(input_shape[1], int) else 8
-    print(f"[predictor] ONNX loaded: {_ONNX_PATH.name} (output={_n_outputs}, lookback={_lookback})")
-
-
-def predict(x: np.ndarray) -> np.ndarray:
-    """
-    Parameters
-    ----------
-    x : np.ndarray, shape (batch, lookback, n_features), dtype float32
-
-    Returns
-    -------
-    np.ndarray shape (batch, n_outputs)
-    """
-    _load_session()
-    return _session.run([_output_name], {_input_name: x.astype(np.float32)})[0]
+    _sessions[arch] = {
+        "session":     sess,
+        "input_name":  sess.get_inputs()[0].name,
+        "output_name": sess.get_outputs()[0].name,
+        "n_outputs":   n_outputs,
+        "lookback":    lookback,
+    }
+    return _sessions[arch]
 
 
-def is_ready() -> bool:
+def predict(x: np.ndarray, arch: str = DEFAULT_ARCH) -> np.ndarray:
+    s = _load_session(arch)
+    return s["session"].run([s["output_name"]], {s["input_name"]: x.astype(np.float32)})[0]
+
+
+def available_archs() -> list:
+    """Trả về danh sách arch có ONNX file tồn tại."""
+    result = []
+    for arch, candidates in _ARCH_CANDIDATES.items():
+        if any(p.exists() for p in candidates):
+            result.append(arch)
+    return result
+
+
+def is_ready(arch: str = DEFAULT_ARCH) -> bool:
     try:
-        _load_session()
+        _load_session(arch)
         return True
     except Exception:
         return False
 
 
-def rolling_predict(track: list[dict], cutoff_index: int, max_steps: int = 40) -> list[dict]:
+def rolling_predict(track: "list[dict]", cutoff_index: int, arch: str = DEFAULT_ARCH, max_steps: int = 40) -> "list[dict]":
     """
     Dự đoán quỹ đạo từ cutoff_index.
 
@@ -110,8 +123,10 @@ def rolling_predict(track: list[dict], cutoff_index: int, max_steps: int = 40) -
     import pandas as pd
     from services.preprocessor import prepare_input, decode_output, _load_scaler
 
-    _load_session()
-    scaler = _load_scaler()
+    sess_info  = _load_session(arch)
+    scaler     = _load_scaler()
+    _lookback  = sess_info["lookback"]
+    _n_outputs = sess_info["n_outputs"]
     is_sprint1 = (_n_outputs == 16)
 
     current = [dict(p) for p in track[:cutoff_index]]
@@ -132,7 +147,7 @@ def rolling_predict(track: list[dict], cutoff_index: int, max_steps: int = 40) -
         # Tránh rolling error accumulation do velocity features bị sai sau mỗi bước
         try:
             x      = prepare_input(current, lookback=_lookback)
-            pred   = predict(x)
+            pred   = predict(x, arch=arch)
             coords = decode_output(pred, x, scaler)  # shape (16,)
         except Exception as e:
             print(f"[rolling_predict] error: {e}")
@@ -159,7 +174,7 @@ def rolling_predict(track: list[dict], cutoff_index: int, max_steps: int = 40) -
                 break
             try:
                 x      = prepare_input(current)
-                pred   = predict(x)
+                pred   = predict(x, arch=arch)
                 coords = decode_output(pred, x, scaler)
             except Exception as e:
                 print(f"[rolling_predict] error: {e}")

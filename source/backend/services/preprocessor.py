@@ -25,8 +25,21 @@ Feature order legacy (12):
 
 import math
 import pickle
+import sys
 import numpy as np
 from pathlib import Path
+from typing import Dict, List, Optional
+
+# Compatibility shim: scaler.pkl được save bởi numpy 2.x (dùng numpy._core),
+# nhưng backend chạy numpy 1.x (dùng numpy.core). Patch trước khi pickle.load.
+if not hasattr(np, '_core'):
+    import numpy.core as _np_core
+    sys.modules.setdefault('numpy._core', _np_core)
+    sys.modules.setdefault('numpy._core.multiarray', _np_core.multiarray)
+    for _attr in ('_multiarray_umath', 'numeric', 'numerictypes', 'fromnumeric'):
+        _mod = getattr(_np_core, _attr, None)
+        if _mod is not None:
+            sys.modules.setdefault(f'numpy._core.{_attr}', _mod)
 
 # Priority: scs_v12_lb6 (BEST) → scs_v11_lb6 → scs_v9_lb6 → ...
 _BASE = Path(__file__).parent.parent.parent / "model_ai/models"
@@ -62,7 +75,7 @@ _n_features = None
 
 # ── ENSO / ONI lookup ────────────────────────────────────────────────────────
 _ONI_PATH = Path(__file__).parent.parent.parent / "model_ai/data/climate/oni.csv"
-_oni_lookup: dict | None = None   # (year, month) → float
+_oni_lookup: Optional[Dict] = None   # (year, month) → float
 
 
 def _load_oni_lookup() -> dict:
@@ -511,7 +524,7 @@ def _build_row_legacy(pt, prev, storm_age_h):
     ]
 
 
-def prepare_input(points: list[dict], lookback: int = 8) -> np.ndarray:
+def prepare_input(points: "list[dict]", lookback: int = 8) -> np.ndarray:
     """
     Lấy lookback điểm cuối, tính features, scale + clip ±5σ.
     Tự động detect 12/19/20/23/25/27/29 features từ scaler.

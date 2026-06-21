@@ -252,10 +252,11 @@ def main():
             print("  [error] Không tìm thấy checkpoint nào. Hãy chạy G5/G6 trước.")
             return
 
-    # ONNX output path (kèm seed suffix nếu có)
+    # ONNX output path — khi chỉ định --model cụ thể thì thêm arch prefix
     seed_suffix = f"_s{args.seed}" if args.seed is not None else ""
+    arch_prefix = f"_{model_name}" if args.model else ""
     onnx_path  = BASE_DIR / cfg["output"]["onnx_model"].replace(
-        ".onnx", f"{suffix}{seed_suffix}.onnx"
+        ".onnx", f"{arch_prefix}{suffix}{seed_suffix}.onnx"
     )
 
     # --- Load model với auto-detect kiến trúc từ state_dict ---

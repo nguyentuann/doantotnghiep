@@ -1,13 +1,12 @@
 import { useLocale } from '../i18n/LocaleContext'
 
-// Kết quả thực nghiệm — cập nhật 2026-04-15
+// Kết quả thực nghiệm champion scs_v12_lb6 — SCS-only test 2021–2024 (279 sequences)
 const METRICS = [
-  { tag: 'wp_full',      model: 'Ensemble',    mae24: 63.4, skill24: 12.7, mae48: 138.6, best: true  },
-  { tag: 'wp_full',      model: 'BiLSTM',      mae24: 63.5, skill24: 12.5, mae48: 139.5, best: false },
-  { tag: '12feat_clean', model: 'Ensemble',    mae24: 63.9, skill24: 12.0, mae48: 139.1, best: false },
-  { tag: 'paper5feat',   model: 'Ensemble',    mae24: 63.9, skill24: 12.0, mae48: 140.0, best: false },
-  { tag: '14feat',       model: 'Ensemble',    mae24: 65.1, skill24: 10.4, mae48: 141.8, best: false },
-  { tag: 'CLIPER',       model: 'Baseline',    mae24: 72.6, skill24: 0.0,  mae48: 167.6, best: false },
+  { tag: 'scs_v12_lb6', model: 'Transformer', mae24: 101.3, skill24: 42.0, mae48: 249.1, best: true  },
+  { tag: 'scs_v12_lb6', model: 'BiGRU+Attn',  mae24: 118.9, skill24: 31.9, mae48: 337.3, best: false },
+  { tag: 'scs_v12_lb6', model: 'BiLSTM+Attn', mae24: 134.2, skill24: 23.1, mae48: 359.3, best: false },
+  { tag: 'scs_v12_lb6', model: 'LSTM',         mae24: 134.0, skill24: 23.2, mae48: 362.2, best: false },
+  { tag: 'CLIPER',       model: 'Baseline',     mae24: 174.6, skill24: 0.0,  mae48: 431.5, best: false },
 ]
 
 export default function ModelMetricsTable() {

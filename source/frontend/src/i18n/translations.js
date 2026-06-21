@@ -45,7 +45,7 @@ export const translations = {
       mae24:   'MAE 24h',
       skill24: 'Skill 24h',
       mae48:   'MAE 48h',
-      note:    'CLIPER baseline: MAE 24h = 72.6 km',
+      note:    'CLIPER baseline (SCS-only): MAE 24h = 174.6 km',
     },
   },
 
@@ -95,7 +95,7 @@ export const translations = {
       mae24:   'MAE 24h',
       skill24: 'Skill 24h',
       mae48:   'MAE 48h',
-      note:    'CLIPER baseline: MAE 24h = 72.6 km',
+      note:    'CLIPER baseline (SCS-only): MAE 24h = 174.6 km',
     },
   },
 }

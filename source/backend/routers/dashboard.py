@@ -60,15 +60,26 @@ def _best_entry(logs, model_name):
     return min(cands, key=lambda e: e["mae_24h"])
 
 
+def _discover_tags(logs):
+    """Lấy tất cả tags có trong results_log.json theo format {arch}_{tag}."""
+    tags = set()
+    for e in logs:
+        name = e.get("model_name", "")
+        for arch in ARCH_ORDER:
+            prefix = arch + "_"
+            if name.startswith(prefix):
+                tags.add(name[len(prefix):])
+    return tags
+
+
 @router.get("/models")
 def list_dashboard_models():
     """Danh sách tag SCS, mỗi tag kèm 4 kiến trúc (nếu có) + CLIPER baseline."""
     logs = _load_log()
     result = []
 
-    # CLIPER baseline — tính từ per_storm của champion (đúng test set SCS-only),
-    # KHÔNG dùng global min (sẽ nhầm sang CLIPER của tag 14feat test set khác)
-    cliper_24h, cliper_48h = 174.6, 431.5  # fallback giá trị champion đã biết
+    # CLIPER baseline — tính từ per_storm của champion (đúng test set SCS-only)
+    cliper_24h, cliper_48h = 174.6, 431.5
     champ_ps = _FIG / "scs_v12_lb6_scs/per_storm_metrics.json"
     if champ_ps.exists():
         try:
@@ -81,7 +92,16 @@ def list_dashboard_models():
         except Exception:
             pass
 
-    for tag, meta in sorted(TAG_META.items(), key=lambda kv: kv[1]["order"]):
+    # Merge TAG_META + auto-discover từ log để không bỏ sót tag nào
+    all_tags = set(TAG_META.keys()) | _discover_tags(logs)
+
+    def _tag_order(tag):
+        meta = TAG_META.get(tag)
+        if meta:
+            return meta["order"]
+        return 999  # tag không có trong TAG_META → xếp cuối
+
+    for tag in sorted(all_tags, key=_tag_order):
         archs = []
         for arch in ARCH_ORDER:
             e = _best_entry(logs, f"{arch}_{tag}")
@@ -99,15 +119,16 @@ def list_dashboard_models():
             })
         if not archs:
             continue
-        # Best arch theo skill_24h
+
+        meta = TAG_META.get(tag)
         best_arch = max(archs, key=lambda a: a.get("skill_24h") or -999)
         result.append({
             "tag": tag,
-            "display": meta["display"],
-            "n_features": meta["n_features"],
-            "lookback": meta["lookback"],
-            "description": meta["desc"],
-            "is_champion": meta["champion"],
+            "display": meta["display"] if meta else tag,
+            "n_features": meta["n_features"] if meta else None,
+            "lookback": meta["lookback"] if meta else None,
+            "description": meta["desc"] if meta else "",
+            "is_champion": meta["champion"] if meta else False,
             "architectures": archs,
             "best_arch": best_arch["arch"],
             "best_skill_24h": best_arch.get("skill_24h"),
