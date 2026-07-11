@@ -18,7 +18,8 @@ source/model_ai/data/DATA_DESCRIPTION.md
 
 # Model AI — tất cả data (generated + large files)
 source/model_ai/data/raw/
-source/model_ai/data/processed/
+source/model_ai/data/processed/*
+!source/model_ai/data/processed/bao_bien_dong_1960.csv
 source/model_ai/data/features/
 source/model_ai/data/era5/
 source/model_ai/data/noaa_sst/
